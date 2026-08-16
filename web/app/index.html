@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Meridian Payroll — employee portal (fictional demo)</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <p class="banner">
+        Fictional demonstration application. Meridian Payroll does not exist; every figure,
+        account, and token on this page is invented.
+      </p>
+      <h1>Meridian Payroll</h1>
+      <p class="subtitle">
+        This page is served from <code>https://app.meridianpay.example</code> and reads its data
+        from <code>https://api.meridianpay.example</code> — a <strong>different origin</strong>.
+        Every request below is a credentialed cross-origin call that only succeeds because the
+        API's allowlist names this exact origin.
+      </p>
+    </header>
+
+    <main>
+      <section id="status-panel">
+        <h2>Session</h2>
+        <p id="status" role="status">Signing in…</p>
+      </section>
+
+      <section id="payslip-panel" hidden>
+        <h2>Your payslip</h2>
+        <dl id="payslip"></dl>
+      </section>
+
+      <section id="payout-panel" hidden>
+        <h2>Payout account</h2>
+        <dl id="payout"></dl>
+        <p>
+          Changing it uses the CSRF-protected route: a JSON content type and a matching
+          <code>X-Meridian-CSRF</code> header, neither of which a cross-site
+          <em>simple</em> request can carry.
+        </p>
+        <form id="payout-form">
+          <label for="bank-name">Bank</label>
+          <input id="bank-name" name="bank_name" value="Ledgerbrook Mutual (fictional)" required />
+          <label for="account-tail">Account tail (4 digits)</label>
+          <input
+            id="account-tail"
+            name="account_tail"
+            value="8842"
+            pattern="[0-9]{4}"
+            maxlength="4"
+            required
+          />
+          <button type="submit">Update payout account</button>
+        </form>
+        <p id="payout-status" role="status"></p>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

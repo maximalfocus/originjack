@@ -1,0 +1,99 @@
+name: originjack
+
+# Every service in this file is a fictional demonstration service on a hermetic,
+# egress-less container network. Nothing is published to the host, nothing resolves on
+# the public internet, and nothing contacts a real system.
+
+x-hardening: &hardening
+  init: true
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+  # Lets the unprivileged account bind :443 without CAP_NET_BIND_SERVICE, so the origins
+  # are real origins (no port suffix) while the container keeps every capability dropped.
+  sysctls:
+    net.ipv4.ip_unprivileged_port_start: "0"
+
+services:
+  # The secure API. Default service, and the reference every later contrast is measured
+  # against: strict exact-match origin allowlist, no misconfiguration shape.
+  api:
+    <<: *hardening
+    image: originjack:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment:
+      ORIGINJACK_ALLOWED_ORIGINS: "https://app.meridianpay.example"
+      ORIGINJACK_SESSION_SAMESITE: "none"
+    command:
+      - uvicorn
+      - originjack.secure:app
+      - --host=0.0.0.0
+      - --port=443
+      - --no-access-log
+      - --ssl-certfile=/certs/api.meridianpay.example/cert.pem
+      - --ssl-keyfile=/certs/api.meridianpay.example/key.pem
+    networks:
+      demo:
+        aliases: ["api.meridianpay.example"]
+    healthcheck:
+      test:
+        ["CMD", "python", "-m", "originjack.healthcheck", "https://api.meridianpay.example/healthz"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
+  # The legitimate first-party application — the one allowlisted origin.
+  app:
+    <<: *hardening
+    image: originjack:local
+    pull_policy: never
+    environment:
+      ORIGINJACK_STATIC_ROOT: /app/web/app
+    command:
+      - uvicorn
+      - originjack.staticweb:app
+      - --host=0.0.0.0
+      - --port=443
+      - --no-access-log
+      - --ssl-certfile=/certs/app.meridianpay.example/cert.pem
+      - --ssl-keyfile=/certs/app.meridianpay.example/key.pem
+    networks:
+      demo:
+        aliases: ["app.meridianpay.example"]
+    healthcheck:
+      test:
+        ["CMD", "python", "-m", "originjack.healthcheck", "https://app.meridianpay.example/healthz"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
+  # The verification boundary. Runs lint, types, unit tests, and the HTTPS boundary
+  # tests from inside the hermetic network. Local runs and CI invoke exactly this.
+  verify:
+    <<: *hardening
+    image: originjack:local
+    pull_policy: never
+    profiles: ["verify"]
+    environment:
+      ORIGINJACK_API_BASE: "https://api.meridianpay.example"
+      ORIGINJACK_APP_BASE: "https://app.meridianpay.example"
+      ORIGINJACK_CA_BUNDLE: /certs/ca/ca.pem
+    command: ["bash", "scripts/verify.sh"]
+    networks:
+      demo: {}
+    depends_on:
+      api:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+
+networks:
+  demo:
+    # No egress. The demo's containers can reach each other and nothing else.
+    internal: true

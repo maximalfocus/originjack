@@ -1,0 +1,6 @@
+# Hostnames the throwaway demonstration CA issues certificates for.
+#
+# Every name is a non-resolvable RFC 2606 `.example` name that can never exist on the
+# public internet. Later slices append their own origins here.
+api.meridianpay.example
+app.meridianpay.example
