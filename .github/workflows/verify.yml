@@ -25,3 +25,14 @@ jobs:
       # CI recipe: one gate, one place to keep it green.
       - name: ./scripts/demo.sh
         run: ./scripts/demo.sh
+
+      # The browser transcript and screenshots. Kept short-lived, and reviewed as part of
+      # the publication exposure audit before this repository ever becomes public.
+      - name: Upload browser harness artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-harness
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7

@@ -4,3 +4,6 @@
 # public internet. Later slices append their own origins here.
 api.meridianpay.example
 app.meridianpay.example
+# An unrelated third party. Not an attacker — simply an origin the allowlist does not
+# name, which is all it takes for the browser to withhold the response.
+partner.othercorp.example

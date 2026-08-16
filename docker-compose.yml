@@ -25,6 +25,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      target: runtime
     environment:
       ORIGINJACK_ALLOWED_ORIGINS: "https://app.meridianpay.example"
       ORIGINJACK_SESSION_SAMESITE: "none"
@@ -73,6 +74,33 @@ services:
       retries: 30
       start_period: 3s
 
+  # An unrelated third party. Not an attacker: simply an origin the allowlist does not
+  # name, which is the only qualification needed for the browser to withhold a response.
+  partner:
+    <<: *hardening
+    image: originjack:local
+    pull_policy: never
+    environment:
+      ORIGINJACK_STATIC_ROOT: /app/web/partner
+    command:
+      - uvicorn
+      - originjack.staticweb:app
+      - --host=0.0.0.0
+      - --port=443
+      - --no-access-log
+      - --ssl-certfile=/certs/partner.othercorp.example/cert.pem
+      - --ssl-keyfile=/certs/partner.othercorp.example/key.pem
+    networks:
+      demo:
+        aliases: ["partner.othercorp.example"]
+    healthcheck:
+      test:
+        ["CMD", "python", "-m", "originjack.healthcheck", "https://partner.othercorp.example/healthz"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
   # The verification boundary. Runs lint, types, unit tests, and the HTTPS boundary
   # tests from inside the hermetic network. Local runs and CI invoke exactly this.
   verify:
@@ -93,7 +121,50 @@ services:
       app:
         condition: service_healthy
 
+  # The browser harness. The only image carrying Chromium, built FROM the runtime stage
+  # so it shares the identical demo CA. This is where the project stops asserting headers
+  # and starts observing what a browser does with them.
+  browser:
+    <<: *hardening
+    image: originjack-browser:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: browser
+    profiles: ["browser"]
+    # Chromium crashes on Docker's default 64MB /dev/shm.
+    shm_size: "1gb"
+    environment:
+      ORIGINJACK_API_BASE: "https://api.meridianpay.example"
+      ORIGINJACK_APP_BASE: "https://app.meridianpay.example"
+      ORIGINJACK_PARTNER_BASE: "https://partner.othercorp.example"
+      ORIGINJACK_CA_BUNDLE: /certs/ca/ca.pem
+      ORIGINJACK_ARTIFACTS: /artifacts
+      HOME: /home/originjack
+    # A named volume, not a tmpfs: the artifacts have to outlive the container so the
+    # transcript and screenshots can be copied to the host after the run.
+    volumes:
+      - artifacts:/artifacts
+    # Chromium needs a roomier scratch area than the other services, and its own writable
+    # HOME for the NSS trust store the demo CA is imported into.
+    tmpfs:
+      - /tmp:rw,nosuid,size=512m,mode=1777
+      - /home/originjack:rw,nosuid,size=256m,mode=0700,uid=10001,gid=10001
+    command: ["bash", "scripts/verify-browser.sh"]
+    networks:
+      demo: {}
+    depends_on:
+      api:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+      partner:
+        condition: service_healthy
+
 networks:
   demo:
     # No egress. The demo's containers can reach each other and nothing else.
     internal: true
+
+volumes:
+  artifacts:

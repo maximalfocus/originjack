@@ -16,6 +16,9 @@ venv/
 dist/
 build/
 
+# Harness run artifacts (transcript, screenshots) are produced per run, never committed.
+artifacts/
+
 # Tooling caches
 .pytest_cache/
 .mypy_cache/

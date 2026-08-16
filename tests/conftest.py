@@ -70,12 +70,22 @@ def client(secure_app: FastAPI) -> Iterator[TestClient]:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip the HTTPS boundary suite unless the containers are actually running."""
-    if os.environ.get("ORIGINJACK_API_BASE"):
-        return
+    """Skip suites whose environment is absent, rather than failing them.
+
+    The HTTPS boundary suite needs the containers up; the browser suite additionally
+    needs the browser image, which is the only one carrying Chromium.
+    """
     skip_boundary = pytest.mark.skip(
         reason="ORIGINJACK_API_BASE is unset; run the boundary suite via ./scripts/demo.sh"
     )
+    skip_browser = pytest.mark.skip(
+        reason="ORIGINJACK_ARTIFACTS is unset; the browser suite runs in the browser image"
+    )
+    has_services = bool(os.environ.get("ORIGINJACK_API_BASE"))
+    has_browser = bool(os.environ.get("ORIGINJACK_ARTIFACTS"))
+
     for item in items:
-        if "boundary" in item.keywords:
+        if "boundary" in item.keywords and not has_services:
             item.add_marker(skip_boundary)
+        if "browser" in item.keywords and not has_browser:
+            item.add_marker(skip_browser)

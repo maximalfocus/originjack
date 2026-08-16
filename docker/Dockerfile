@@ -50,3 +50,28 @@ RUN groupadd --gid 10001 originjack \
 USER 10001:10001
 
 CMD ["python", "-c", "print('originjack: specify a service command')"]
+
+# --- Browser harness -----------------------------------------------------------------
+# Built FROM the runtime stage, so it carries the *same* /certs layer — and therefore the
+# same demo CA — as every other service. Only this image pays for Chromium.
+FROM runtime AS browser
+
+USER root
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    HOME=/home/originjack \
+    ORIGINJACK_ARTIFACTS=/artifacts
+
+# certutil (libnss3-tools) is how the demo CA is genuinely added to Chromium's own trust
+# store at run time. The alternative — launching with certificate errors ignored — would
+# make a demonstration about trust decisions work by switching trust off.
+RUN playwright install --with-deps chromium \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends libnss3-tools \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /artifacts /home/originjack \
+ && chown 10001:10001 /artifacts /home/originjack
+
+USER 10001:10001
+
+CMD ["bash", "scripts/verify-browser.sh"]

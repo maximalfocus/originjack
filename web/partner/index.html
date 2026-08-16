@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OtherCorp Partner Portal (fictional demo)</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-outcome="pending">
+    <header>
+      <p class="banner">
+        Fictional demonstration page. OtherCorp does not exist, and this page is not an
+        attacker — it is simply an unrelated site the allowlist does not name.
+      </p>
+      <h1>OtherCorp Partner Portal</h1>
+      <p class="subtitle">
+        This page is served from <code>https://partner.othercorp.example</code>. It makes the
+        <strong>identical</strong> credentialed cross-origin request to
+        <code>https://api.meridianpay.example/me/payslip</code> that the first-party Meridian
+        Payroll application makes — same URL, same method, same
+        <code>credentials: "include"</code>, same logged-in victim, same session cookie.
+      </p>
+      <p class="subtitle">
+        The only difference is the <code>Origin</code> this page sends. That is the whole
+        experiment.
+      </p>
+    </header>
+
+    <main>
+      <section>
+        <h2>Result</h2>
+        <p id="status" role="status">Requesting…</p>
+        <pre id="detail"></pre>
+      </section>
+
+      <section id="payslip-panel" hidden>
+        <h2>Payslip data this page obtained</h2>
+        <dl id="payslip"></dl>
+      </section>
+    </main>
+
+    <script src="/partner.js"></script>
+  </body>
+</html>

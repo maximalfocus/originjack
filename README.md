@@ -12,14 +12,15 @@ cookie — and how a **strict, exact-match origin allowlist** prevents it.
 
 ## Status
 
-`SLICE-001` — the hermetic multi-origin TLS baseline and the **secure** API.
+`SLICE-002` — the containerized headless-browser verification harness.
 
-What exists today is the *correct* configuration only: the fictional Meridian Payroll
-domain, demo authentication with a `SameSite=None; Secure` session cookie, two HTTPS
-origins on an egress-less network, the exact-match origin allowlist, the refused-origin
-audit event, and the first-party application that exercises them. **There is no
-vulnerable service and no attacker origin in this repository yet**; the misconfiguration
-ladder, the negative controls, and the headless-browser harness arrive in later slices.
+What exists today is the *correct* configuration only, now demonstrated through a real
+browser: the fictional Meridian Payroll domain, demo authentication with a
+`SameSite=None; Secure` session cookie, three HTTPS origins on an egress-less network,
+the exact-match origin allowlist, the refused-origin audit event, the first-party
+application, and Chromium driving all of it. **There is no vulnerable service and no
+attacker origin in this repository yet**; the misconfiguration ladder and the negative
+controls arrive in later slices.
 
 ## Run it
 
@@ -27,10 +28,11 @@ ladder, the negative controls, and the headless-browser harness arrive in later 
 ./scripts/demo.sh
 ```
 
-That is the whole supported workflow. It builds the image (generating a throwaway
-demonstration CA and one certificate per origin *inside the build*), starts the secure
-API and the first-party application on the hermetic network, runs the full verification
-gate — Ruff, mypy, unit tests, and HTTPS boundary tests — from inside that network, and
+That is the whole supported workflow. It builds the images (generating a throwaway
+demonstration CA and one certificate per origin *inside the build*), starts the origins
+on the hermetic network, runs the verification gate — Ruff, mypy, unit tests, HTTPS
+boundary tests — from inside that network, then drives the whole demonstration through a
+real headless Chromium, copies the transcript and screenshots to `./artifacts/`, and
 tears everything down.
 
 The host needs **Docker and nothing else**: no Python, no browser, no hosts-file entry,
@@ -42,10 +44,53 @@ no trusted certificate, and no published port. GitHub Actions runs the same comm
 |---|---|
 | `https://app.meridianpay.example` | the legitimate first-party application — the **one** allowlisted origin |
 | `https://api.meridianpay.example` | the secure API |
+| `https://partner.othercorp.example` | an unrelated third party the allowlist does not name |
 
-They are separate on purpose. That separation is the ordinary real-world arrangement
-that makes a CORS policy necessary at all, and it is why the session cookie must be
-issued `SameSite=None; Secure`.
+The first two are separate on purpose. That separation is the ordinary real-world
+arrangement that makes a CORS policy necessary at all, and it is why the session cookie
+must be issued `SameSite=None; Secure`. The third is not an attacker — it is simply an
+origin the allowlist does not contain, which turns out to be the only qualification
+needed for the browser to withhold a response.
+
+## The browser is the enforcement point
+
+The server can describe its policy, but only the browser enforces it — so a header
+assertion can show a misconfiguration exists and can never show what it costs. Every
+cross-origin claim this project makes is produced by Chromium executing the pages' own
+JavaScript against the real network, with the demo CA imported into the browser's own NSS
+trust store. Certificate errors are **not** ignored: a demonstration about a trust
+decision should not work by switching trust off.
+
+The harness records, per scenario, what the server sent, what the browser did with it,
+what the page could actually render, and which component decided. That last column is the
+whole point. From a run:
+
+```
+[3] third-party read                                          VERDICT: SECURE
+    calling origin        https://partner.othercorp.example
+    server response       status=200  ACAO=(absent)  ACAC=(absent)  browser-failure=net::ERR_FAILED
+    browser released      no
+    victim data rendered  no
+    decided by            THE BROWSER — the server answered 200; the browser withheld
+                          that answer from the page
+```
+
+The request was sent. The session cookie was carried. The server produced the victim's
+full payslip and it arrived at the browser. The page was told only that its request
+failed — because one response header was missing.
+
+Two details the harness observes rather than assumes: whether a **preflight** actually
+happened (it is issued by the browser's network service, so it never reaches page-level
+network events — the harness watches the DevTools protocol, where it does appear), and
+what the server really sent on a blocked response (also only visible there, since the
+page is told nothing).
+
+The pinned engine is **Chromium**, and the transcript records its version and the
+behaviour known to differ elsewhere — most importantly third-party cookie policy, which
+decides whether a cross-site request carries the session at all.
+
+Run artifacts land in `./artifacts/` (transcript plus one screenshot per scenario) and
+are never committed.
 
 ## Where the security boundary lives
 
@@ -74,9 +119,12 @@ repository, and none is issued by or for any real authority.
 ## Layout
 
 ```
-docker/          image, throwaway CA generation, origin list
-scripts/         demo.sh (the one command) and the in-container verification gate
-src/originjack/  the API, the origin policy, sessions, fixtures, audit log
-web/app/         the first-party application (static HTML/JS, no build step)
-tests/           unit · in-process HTTP contract · HTTPS boundary
+docker/                  images, throwaway CA generation, origin list
+scripts/                 demo.sh (the one command) and the in-container gates
+src/originjack/          the API, the origin policy, sessions, fixtures, audit log
+src/originjack/harness/  the browser lab, its scenarios, and the transcript
+web/app/                 the first-party application (static HTML/JS, no build step)
+web/partner/             the unrelated third-party page
+tests/                   unit · in-process HTTP contract · HTTPS boundary · browser
+artifacts/               per-run transcript and screenshots (never committed)
 ```
