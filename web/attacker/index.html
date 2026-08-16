@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Summer Promo — win a holiday! (fictional attacker page)</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-outcome="pending" data-api="">
+    <header>
+      <p class="danger">
+        <strong>Intentionally malicious demonstration page — local educational material.</strong>
+        This page exists to be run inside the originjack demo's own hermetic container network
+        against its own fictional services. It must never be deployed or hosted anywhere.
+      </p>
+      <h1>🏝️ Summer Promo</h1>
+      <p class="subtitle">
+        The victim has an ordinary reason to be here. They are logged in to their payroll
+        provider in another tab, as people are, and they clicked a link.
+      </p>
+      <p class="subtitle">
+        This page then runs one <code>fetch</code>. No exploit, no injected script, no stolen
+        password — the same credentialed cross-origin request the payroll provider's own
+        application makes, from an origin that has nothing to do with it. Whether it works is
+        decided entirely by two response headers the API chooses to send.
+      </p>
+    </header>
+
+    <main>
+      <section>
+        <h2>Target</h2>
+        <p id="target" role="status"></p>
+      </section>
+
+      <section>
+        <h2>Result</h2>
+        <p id="status" role="status">Requesting…</p>
+        <pre id="detail"></pre>
+      </section>
+
+      <section id="loot-panel" hidden>
+        <h2>Data taken from the victim's session</h2>
+        <p class="danger">
+          Everything below was read out of the victim's payroll account by this page, in the
+          victim's own browser, using the victim's own session cookie.
+        </p>
+        <dl id="loot"></dl>
+      </section>
+    </main>
+
+    <script src="/attacker.js"></script>
+  </body>
+</html>

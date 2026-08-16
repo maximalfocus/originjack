@@ -7,3 +7,9 @@ app.meridianpay.example
 # An unrelated third party. Not an attacker — simply an origin the allowlist does not
 # name, which is all it takes for the browser to withhold the response.
 partner.othercorp.example
+
+# Opt-in only. Neither of these starts without an explicit Compose profile *and* the
+# acknowledgement ALLOW_VULNERABLE_DEMO=true; the certificates exist unconditionally
+# because the image is built once, and a certificate for a name nothing serves is inert.
+legacy-api.meridianpay.example
+promo.attacker.example

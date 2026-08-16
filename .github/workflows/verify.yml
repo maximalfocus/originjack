@@ -23,16 +23,37 @@ jobs:
 
       # The same command a contributor runs locally. There is deliberately no separate
       # CI recipe: one gate, one place to keep it green.
+      #
+      # The default path proves that nothing vulnerable starts without being asked for.
       - name: ./scripts/demo.sh
         run: ./scripts/demo.sh
 
-      # The browser transcript and screenshots. Kept short-lived, and reviewed as part of
-      # the publication exposure audit before this repository ever becomes public.
-      - name: Upload browser harness artifacts
+      - name: Upload secure-baseline artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-harness
+          name: browser-harness-secure
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+      # And the acknowledged path exercises the full contrast. The acknowledgement is
+      # spelled out here rather than defaulted anywhere, which is the point of it.
+      - name: ALLOW_VULNERABLE_DEMO=true ./scripts/demo.sh --with-vulnerable
+        env:
+          ALLOW_VULNERABLE_DEMO: "true"
+        run: |
+          rm -rf artifacts
+          ./scripts/demo.sh --with-vulnerable
+
+      # Browser transcripts and screenshots. Kept short-lived, and reviewed as part of the
+      # publication exposure audit before this repository ever becomes public — they show
+      # fictional payroll data taken from a fictional victim.
+      - name: Upload vulnerable-contrast artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-harness-vulnerable
           path: artifacts/
           if-no-files-found: warn
           retention-days: 7
