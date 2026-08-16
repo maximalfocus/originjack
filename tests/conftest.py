@@ -39,6 +39,14 @@ REFUSED_ORIGINS: Final[tuple[str, ...]] = (
     "",
 )
 
+#: The origins the demonstration frames as adversaries. Each is refused by the secure
+#: policy and granted by the reflection shape, which is the contrast the demo is built on.
+ATTACKER_ORIGINS: Final[tuple[str, ...]] = (
+    "https://promo.attacker.example",
+    "https://app.meridianpay.example.attacker.example",
+    "https://notmeridianpay.example",
+)
+
 #: Values a policy must refuse but that no real client can put on the wire — a header
 #: value cannot begin with whitespace. They stay in the policy-level matrix and are
 #: excluded from the suites that make real HTTP requests.
@@ -81,11 +89,22 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     skip_browser = pytest.mark.skip(
         reason="ORIGINJACK_ARTIFACTS is unset; the browser suite runs in the browser image"
     )
+    skip_vulnerable = pytest.mark.skip(
+        reason="the opt-in vulnerable services are not running; "
+        "run ALLOW_VULNERABLE_DEMO=true ./scripts/demo.sh --with-vulnerable"
+    )
     has_services = bool(os.environ.get("ORIGINJACK_API_BASE"))
     has_browser = bool(os.environ.get("ORIGINJACK_ARTIFACTS"))
+    has_vulnerable = os.environ.get("ORIGINJACK_INCLUDE_VULNERABLE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
     for item in items:
         if "boundary" in item.keywords and not has_services:
             item.add_marker(skip_boundary)
         if "browser" in item.keywords and not has_browser:
             item.add_marker(skip_browser)
+        if "vulnerable" in item.keywords and not has_vulnerable:
+            item.add_marker(skip_vulnerable)

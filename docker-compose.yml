@@ -101,6 +101,81 @@ services:
       retries: 30
       start_period: 3s
 
+  # =====================================================================================
+  # OPT-IN ONLY — deliberately insecure educational material below this line.
+  #
+  # Starting either service takes two deliberate actions: the `vulnerable` Compose
+  # profile, and the acknowledgement ALLOW_VULNERABLE_DEMO=true. The second is checked by
+  # the application itself, not only here, so the gate does not disappear the moment
+  # somebody bypasses Compose. Neither service is reachable from the host, and neither can
+  # reach anything outside this network.
+  # =====================================================================================
+
+  # The vulnerable API. Identical routes, domain, sessions, and payloads to `api`; the
+  # only difference is the CORS policy object it is built with.
+  legacy-api:
+    <<: *hardening
+    image: originjack:local
+    pull_policy: never
+    profiles: ["vulnerable"]
+    environment:
+      ALLOW_VULNERABLE_DEMO: ${ALLOW_VULNERABLE_DEMO:-}
+      ORIGINJACK_ALLOWED_ORIGINS: "https://app.meridianpay.example"
+      ORIGINJACK_VULNERABLE_SHAPE: "reflect"
+      ORIGINJACK_SESSION_SAMESITE: "none"
+    command:
+      - uvicorn
+      # A factory, so the ALLOW_VULNERABLE_DEMO gate fires at start-up and the module
+      # stays importable by the tests that prove the gate works.
+      - originjack.vulnerable:build
+      - --factory
+      - --host=0.0.0.0
+      - --port=443
+      - --no-access-log
+      - --ssl-certfile=/certs/legacy-api.meridianpay.example/cert.pem
+      - --ssl-keyfile=/certs/legacy-api.meridianpay.example/key.pem
+    networks:
+      demo:
+        aliases: ["legacy-api.meridianpay.example"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - originjack.healthcheck
+        - https://legacy-api.meridianpay.example/healthz
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
+  # The attacker's page. An unrelated site the victim happens to visit.
+  attacker:
+    <<: *hardening
+    image: originjack:local
+    pull_policy: never
+    profiles: ["vulnerable"]
+    environment:
+      ORIGINJACK_STATIC_ROOT: /app/web/attacker
+    command:
+      - uvicorn
+      - originjack.staticweb:app
+      - --host=0.0.0.0
+      - --port=443
+      - --no-access-log
+      - --ssl-certfile=/certs/promo.attacker.example/cert.pem
+      - --ssl-keyfile=/certs/promo.attacker.example/key.pem
+    networks:
+      demo:
+        aliases: ["promo.attacker.example"]
+    healthcheck:
+      test:
+        ["CMD", "python", "-m", "originjack.healthcheck", "https://promo.attacker.example/healthz"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
   # The verification boundary. Runs lint, types, unit tests, and the HTTPS boundary
   # tests from inside the hermetic network. Local runs and CI invoke exactly this.
   verify:
@@ -111,6 +186,7 @@ services:
     environment:
       ORIGINJACK_API_BASE: "https://api.meridianpay.example"
       ORIGINJACK_APP_BASE: "https://app.meridianpay.example"
+      ORIGINJACK_VULNERABLE_API_BASE: "https://legacy-api.meridianpay.example"
       ORIGINJACK_CA_BUNDLE: /certs/ca/ca.pem
     command: ["bash", "scripts/verify.sh"]
     networks:
@@ -138,6 +214,8 @@ services:
       ORIGINJACK_API_BASE: "https://api.meridianpay.example"
       ORIGINJACK_APP_BASE: "https://app.meridianpay.example"
       ORIGINJACK_PARTNER_BASE: "https://partner.othercorp.example"
+      ORIGINJACK_VULNERABLE_API_BASE: "https://legacy-api.meridianpay.example"
+      ORIGINJACK_ATTACKER_BASE: "https://promo.attacker.example"
       ORIGINJACK_CA_BUNDLE: /certs/ca/ca.pem
       ORIGINJACK_ARTIFACTS: /artifacts
       HOME: /home/originjack

@@ -12,17 +12,11 @@ from pathlib import Path
 import pytest
 
 from originjack.config import FIRST_PARTY_ORIGIN
-from originjack.harness import HarnessRun, run
+from originjack.harness import HarnessRun
 from originjack.harness.scenarios import CHANGED_ACCOUNT_TAIL, VICTIM_MARKERS
 from originjack.harness.transcript import ENGINE_NOTES
 
 pytestmark = pytest.mark.browser
-
-
-@pytest.fixture(scope="session")
-def harness() -> HarnessRun:
-    """One browser run for the whole session; each test interrogates one outcome."""
-    return run()
 
 
 # --- the lab itself -------------------------------------------------------------------

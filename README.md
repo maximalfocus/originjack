@@ -12,45 +12,103 @@ cookie — and how a **strict, exact-match origin allowlist** prevents it.
 
 ## Status
 
-`SLICE-002` — the containerized headless-browser verification harness.
+`SLICE-003a` — the vulnerable API, its opt-in controls, and origin reflection with
+credentials.
 
-What exists today is the *correct* configuration only, now demonstrated through a real
-browser: the fictional Meridian Payroll domain, demo authentication with a
-`SameSite=None; Secure` session cookie, three HTTPS origins on an egress-less network,
-the exact-match origin allowlist, the refused-origin audit event, the first-party
-application, and Chromium driving all of it. **There is no vulnerable service and no
-attacker origin in this repository yet**; the misconfiguration ladder and the negative
-controls arrive in later slices.
+The demonstration now has both halves: the correct configuration, and the first of the
+three misconfiguration shapes. Still to come are the sloppy-allowlist and `null`-origin
+shapes, both negative controls, the `SameSite` contrast, the full regression matrix, the
+comparison CLI, and the walkthrough.
 
 ## Run it
 
 ```sh
-./scripts/demo.sh
+./scripts/demo.sh                                              # secure baseline only
+ALLOW_VULNERABLE_DEMO=true ./scripts/demo.sh --with-vulnerable # the full contrast
 ```
 
-That is the whole supported workflow. It builds the images (generating a throwaway
-demonstration CA and one certificate per origin *inside the build*), starts the origins
-on the hermetic network, runs the verification gate — Ruff, mypy, unit tests, HTTPS
-boundary tests — from inside that network, then drives the whole demonstration through a
-real headless Chromium, copies the transcript and screenshots to `./artifacts/`, and
-tears everything down.
+The default builds the images (generating a throwaway demonstration CA and one
+certificate per origin *inside the build*), starts the secure origins on the hermetic
+network, runs the verification gate — Ruff, mypy, unit tests, HTTPS boundary tests — from
+inside that network, then drives the demonstration through a real headless Chromium,
+copies the transcript and screenshots to `./artifacts/`, and tears everything down.
 
 The host needs **Docker and nothing else**: no Python, no browser, no hosts-file entry,
-no trusted certificate, and no published port. GitHub Actions runs the same command.
+no trusted certificate, and no published port. GitHub Actions runs both commands.
+
+## ⚠️ The vulnerable service
+
+`legacy-api.meridianpay.example` is **deliberately misconfigured**, and
+`promo.attacker.example` is **deliberately malicious**. They exist to be run inside this
+demo's own hermetic container network against its own fictional services, and must never
+be deployed or hosted anywhere.
+
+Starting them takes **two deliberate actions**, and neither alone does anything:
+
+1. the opt-in Compose profile (`--with-vulnerable`, or `--profile vulnerable`), and
+2. the acknowledgement `ALLOW_VULNERABLE_DEMO=true`.
+
+The second is checked by the vulnerable application itself, not only by Compose — a
+control that lives solely in orchestration configuration is one `docker run` away from
+not existing. Every run of `./scripts/demo.sh`, in either mode, first proves the gate
+still refuses, and the default mode additionally proves no opt-in service came up.
 
 ## The origins
 
-| Origin | Role |
-|---|---|
-| `https://app.meridianpay.example` | the legitimate first-party application — the **one** allowlisted origin |
-| `https://api.meridianpay.example` | the secure API |
-| `https://partner.othercorp.example` | an unrelated third party the allowlist does not name |
+| Origin | Role | Default |
+|---|---|---|
+| `https://app.meridianpay.example` | the legitimate first-party application — the **one** allowlisted origin | ✅ |
+| `https://api.meridianpay.example` | the **secure** API | ✅ |
+| `https://partner.othercorp.example` | an unrelated third party the allowlist does not name | ✅ |
+| `https://legacy-api.meridianpay.example` | the **vulnerable** API | opt-in |
+| `https://promo.attacker.example` | the attacker's page | opt-in |
 
 The first two are separate on purpose. That separation is the ordinary real-world
 arrangement that makes a CORS policy necessary at all, and it is why the session cookie
 must be issued `SameSite=None; Secure`. The third is not an attacker — it is simply an
 origin the allowlist does not contain, which turns out to be the only qualification
 needed for the browser to withhold a response.
+
+## The whole vulnerability, side by side
+
+Both API deployments serve identical routes, sessions, and payloads. They are built with
+different policy objects, and that is the only difference between them:
+
+```python
+# cors.py — the secure policy answers with the value it holds
+for allowlisted in self.allowed_origins:
+    if origin == allowlisted:
+        return CorsDecision(granted=True, allow_origin=allowlisted, ...)
+return REFUSED
+
+# vulnerable_cors.py — this one answers with the value the request supplied
+return CorsDecision(granted=True, allow_origin=origin, allow_credentials=True, ...)
+```
+
+Run with `--with-vulnerable`, the same attacker page is pointed at each deployment in
+turn. The transcript:
+
+```
+[1] attacker read (vulnerable API)                            VERDICT: VULNERABLE
+    calling origin        https://promo.attacker.example
+    server response       status=200  ACAO=https://promo.attacker.example  ACAC=true
+    browser released      yes
+    victim data rendered  yes
+    decided by            THE SERVER — it echoed the caller's own origin back as an
+                          allowed one; the browser complied, correctly
+
+[2] attacker read (secure API)                                VERDICT: SECURE
+    calling origin        https://promo.attacker.example
+    server response       status=200  ACAO=(absent)  ACAC=(absent)  browser-failure=net::ERR_FAILED
+    browser released      no
+    victim data rendered  no
+    decided by            THE BROWSER — the server answered 200; the browser withheld
+                          that answer from the page
+```
+
+Same page, same URL path, same credentials, same logged-in victim. Both servers answered
+in full. One of them told the browser to share the answer with an origin it had never
+compared to anything.
 
 ## The browser is the enforcement point
 
@@ -122,9 +180,14 @@ repository, and none is issued by or for any real authority.
 docker/                  images, throwaway CA generation, origin list
 scripts/                 demo.sh (the one command) and the in-container gates
 src/originjack/          the API, the origin policy, sessions, fixtures, audit log
-src/originjack/harness/  the browser lab, its scenarios, and the transcript
+  cors.py                the secure decision  ─┐ read these two
+  vulnerable_cors.py     the misconfigured one ┘ together
+  secure.py              the secure entry point
+  vulnerable.py          the opt-in entry point and its acknowledgement gate
+  harness/               the browser lab, its scenarios, and the transcript
 web/app/                 the first-party application (static HTML/JS, no build step)
 web/partner/             the unrelated third-party page
+web/attacker/            the attacker's page (opt-in origin)
 tests/                   unit · in-process HTTP contract · HTTPS boundary · browser
 artifacts/               per-run transcript and screenshots (never committed)
 ```

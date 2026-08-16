@@ -91,6 +91,40 @@ def test_the_transcript_names_the_engine_the_decider_and_the_verdict() -> None:
         assert note in text
 
 
+def test_the_transcript_never_credits_an_allowlist_the_server_does_not_have() -> None:
+    """The reflection shape grants without comparing anything, and the wording must say so.
+
+    Describing it as "the allowlist granted it" would quietly teach the opposite of the
+    lesson — that the vulnerable server made a decision, when its whole problem is that
+    it made none.
+    """
+    reflected = render(
+        [
+            _result(
+                calling_origin="https://promo.attacker.example",
+                browser_released=True,
+                victim_data_rendered=True,
+                decided_by="server",
+                verdict="vulnerable",
+                observation=NetworkObservation(
+                    url="https://legacy-api.meridianpay.example/me/payslip",
+                    status=200,
+                    allow_origin="https://promo.attacker.example",
+                    allow_credentials="true",
+                ),
+            )
+        ],
+        engine="chromium 131.0.0.0",
+        generated_at="2026-08-17T00:00:00+00:00",
+        subject="x",
+    )
+
+    assert "VERDICT: VULNERABLE" in reflected
+    assert "THE SERVER" in reflected
+    assert "echoed the caller's own origin" in reflected
+    assert "allowlist" not in reflected
+
+
 def test_the_transcript_distinguishes_an_observed_preflight_from_none() -> None:
     sent = render(
         [_result(preflight=True)],

@@ -57,6 +57,9 @@ class LabSettings:
     ca_bundle: Path
     artifacts_dir: Path
     home: Path
+    vulnerable_api_origin: str = "https://legacy-api.meridianpay.example"
+    attacker_origin: str = "https://promo.attacker.example"
+    include_vulnerable: bool = False
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> LabSettings:
@@ -70,6 +73,16 @@ class LabSettings:
             ca_bundle=Path(source.get("ORIGINJACK_CA_BUNDLE", "/certs/ca/ca.pem")),
             artifacts_dir=Path(source.get("ORIGINJACK_ARTIFACTS", "/artifacts")),
             home=Path(source.get("HOME", "/home/originjack")),
+            vulnerable_api_origin=source.get(
+                "ORIGINJACK_VULNERABLE_API_BASE", "https://legacy-api.meridianpay.example"
+            ),
+            attacker_origin=source.get(
+                "ORIGINJACK_ATTACKER_BASE", "https://promo.attacker.example"
+            ),
+            # The vulnerable services only exist when the operator opted in twice, so the
+            # harness only looks for them when told to.
+            include_vulnerable=source.get("ORIGINJACK_INCLUDE_VULNERABLE", "").strip().lower()
+            in {"1", "true", "yes"},
         )
 
 
@@ -309,6 +322,45 @@ class BrowserLab:
 
         page.goto(url, wait_until="domcontentloaded")
         return page, log
+
+    def sign_in(self, api_origin: str, *, employee_id: str, demo_password: str) -> None:
+        """Establish the victim's session on one API deployment, in the browser.
+
+        Setup, not a demonstrated outcome — the scenarios are about what a page on
+        somebody else's origin can do with a session that already exists, so the session
+        has to already exist.
+
+        Done through page script on the first-party origin rather than through
+        Playwright's API request context, for two reasons. The request context is backed
+        by the Node driver, which knows nothing about the demo CA in Chromium's NSS store.
+        And more to the point, this is how it happens in life: the victim signed in, in
+        their own browser, in another tab.
+        """
+        page = self.context.new_page()
+        try:
+            page.goto(f"{self.settings.app_origin}/healthz", wait_until="domcontentloaded")
+            status = page.evaluate(
+                """async ({ api, employeeId, password }) => {
+                    const response = await fetch(`${api}/session`, {
+                        method: "POST",
+                        credentials: "include",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({
+                            employee_id: employeeId,
+                            demo_password: password,
+                        }),
+                    });
+                    return response.status;
+                }""",
+                {"api": api_origin, "employeeId": employee_id, "password": demo_password},
+            )
+        finally:
+            page.close()
+
+        if status != 200:
+            raise RuntimeError(
+                f"could not establish the victim's session on {api_origin}: HTTP {status}"
+            )
 
     def capture(self, page: Page, name: str) -> str:
         """Screenshot the page and return the artifact's path relative to the run."""

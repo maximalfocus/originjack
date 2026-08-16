@@ -36,10 +36,18 @@ def _decided_by(result: ScenarioResult) -> str:
     The interesting claim — that the server answered and the browser withheld the answer
     — is only made when the response was seen on the wire.
     """
+    observation = result.observation
+
+    if result.decided_by == "server" and result.verdict == "vulnerable":
+        # Not "the allowlist granted it" — there is no allowlist here. The server named
+        # the caller's own origin as allowed, having never compared it to anything.
+        return (
+            "THE SERVER — it echoed the caller's own origin back as an allowed one; "
+            "the browser complied, correctly"
+        )
     if result.decided_by == "server":
         return "the server's allowlist granted it, and the browser honoured the grant"
 
-    observation = result.observation
     if observation is not None and observation.server_answered:
         return (
             f"THE BROWSER — the server answered {observation.status}; "
