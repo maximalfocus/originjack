@@ -20,6 +20,9 @@ dev = [
   "pytest>=8.3,<9",
   "ruff>=0.7,<0.13",
   "mypy>=1.13,<2",
+  # The Python package is installed everywhere so lint and type checking see the harness;
+  # only the browser image installs the Chromium binary it drives.
+  "playwright>=1.49,<2",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -74,4 +77,5 @@ testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
   "boundary: exercises the running containers over real HTTPS (requires ORIGINJACK_API_BASE)",
+  "browser: drives a real headless browser (requires the browser image and ORIGINJACK_ARTIFACTS)",
 ]

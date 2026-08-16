@@ -89,13 +89,16 @@ async function start() {
     const session = await signIn();
     statusEl.textContent = `Signed in as ${session.display_name}. The credentialed cross-origin read below was permitted because this origin is on the API's allowlist.`;
     renderPayslip(await loadPayslip());
+    document.body.dataset.outcome = "released";
   } catch (error) {
+    document.body.dataset.outcome = "error";
     statusEl.textContent = `Could not load the portal: ${error.message}`;
   }
 }
 
 payoutForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  document.body.dataset.payout = "pending";
   payoutStatusEl.textContent = "Updating…";
   try {
     const response = await fetch(`${API_ORIGIN}/me/payout-account`, {
@@ -119,7 +122,9 @@ payoutForm.addEventListener("submit", async (event) => {
       ["Account tail", `•••• ${updated.account_tail}`],
     ]);
     payoutStatusEl.textContent = "Payout account updated through the CSRF-protected route.";
+    document.body.dataset.payout = "updated";
   } catch (error) {
+    document.body.dataset.payout = "refused";
     payoutStatusEl.textContent = `Update refused: ${error.message}`;
   }
 });
