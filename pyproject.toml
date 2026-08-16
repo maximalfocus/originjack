@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "originjack"
+version = "0.1.0"
+description = "Local, containerized educational demonstration of CORS misconfiguration and the exact-match origin allowlist that prevents it."
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+dependencies = [
+  "fastapi>=0.115,<0.117",
+  "uvicorn[standard]>=0.32,<0.35",
+  "httpx>=0.27,<0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "ruff>=0.7,<0.13",
+  "mypy>=1.13,<2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/originjack"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",    # pycodestyle
+  "F",         # pyflakes
+  "I",         # isort
+  "N",         # pep8-naming
+  "UP",        # pyupgrade
+  "B",         # flake8-bugbear
+  "A",         # flake8-builtins
+  "C4",        # flake8-comprehensions
+  "DTZ",       # flake8-datetimez
+  "PT",        # flake8-pytest-style
+  "RET",       # flake8-return
+  "SIM",       # flake8-simplify
+  "TID",       # flake8-tidy-imports
+  "PTH",       # flake8-use-pathlib
+  "RUF",       # ruff-specific
+  "S",         # flake8-bandit
+]
+ignore = [
+  # The demo deliberately ships conspicuously fake fixture credentials; S105/S106 would
+  # flag every one of them. Real secrets are excluded by NFR-003, not by this ruleset.
+  "S105",
+  "S106",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # pytest asserts
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+  "boundary: exercises the running containers over real HTTPS (requires ORIGINJACK_API_BASE)",
+]
