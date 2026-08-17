@@ -13,6 +13,7 @@ exclusive.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Final
 
 from playwright.sync_api import Page
@@ -216,17 +217,24 @@ SHAPE_LABELS: Final[dict[str, str]] = {
     "reflect": "shape 1 — origin reflection with credentials",
     "sloppy": "shape 2 — sloppy allowlist match",
     "null": "shape 3 — allowlisted `null` origin",
+    "wildcard": "negative control — wildcard with credentials",
 }
 
 #: How each shape actually granted, in its own terms. The three fail differently, and one
 #: phrasing for all of them would misdescribe two.
 GRANT_BASIS: Final[dict[str, str]] = {
-    "reflect": "it echoed the caller's own origin back as an allowed one",
+    "reflect": (
+        "it echoed the caller's own origin back as an allowed one, and the browser "
+        "complied, correctly"
+    ),
     "sloppy": (
         "the caller's hostname contained the corporate domain, which is all its "
-        "unanchored match asked for"
+        "unanchored match asked for, and the browser complied, correctly"
     ),
-    "null": "`null` was in its accepted set, and any page can arrange to send it",
+    "null": (
+        "`null` was in its accepted set, and any page can arrange to send it; the browser "
+        "complied, correctly"
+    ),
 }
 
 
@@ -282,6 +290,13 @@ def attacker_read(
         notes.append(
             "The victim's net pay, payout-account tail, and session API token are now "
             "rendered on a page the payroll provider has never heard of."
+        )
+    elif observation is not None and observation.allow_origin == "*":
+        notes.append(
+            f"{api_origin} answered {observation.status} with "
+            "Access-Control-Allow-Origin: * and Access-Control-Allow-Credentials: "
+            f"{observation.allow_credentials}. It granted everyone; the browser refused "
+            "the combination."
         )
     elif observation is not None:
         notes.append(
@@ -445,8 +460,197 @@ def run_null_shape(lab: BrowserLab, *, start: int) -> list[ScenarioResult]:
     ]
 
 
-SHAPE_RUNNERS: Final[dict[str, Callable[..., list[ScenarioResult]]]] = {
+# --- the negative controls ------------------------------------------------------------
+#
+# What CORS is *not*. Each corrects a specific, common, confidently-held wrong belief.
+
+
+def run_wildcard_control(lab: BrowserLab, *, start: int) -> list[ScenarioResult]:
+    """`FR-011` — the wildcard with credentials, refused by the browser itself."""
+    _sign_in_everywhere(lab)
+
+    # The same refusal applies to *every* credentialed cross-origin caller, so this shape
+    # does not merely fail to help an attacker — it breaks the legitimate application too.
+    # Observed rather than asserted.
+    legitimate = lab.probe_credentialed_read(
+        page_origin=lab.settings.app_origin, api_origin=lab.settings.vulnerable_api_origin
+    )
+
+    return [
+        attacker_read(
+            lab,
+            name="wildcard with credentials",
+            attacker_origin=lab.settings.attacker_origin,
+            target="vulnerable",
+            index=start,
+            shape="wildcard",
+            extra_notes=(
+                "The server refused nothing here. It granted *every* origin and asked for "
+                "credentials as well — and the browser refuses that combination outright, "
+                "because a wildcard cannot be combined with credentials.",
+                "So the wildcard is not the dangerous shape: under credentials it fails "
+                'safe. "We never use `*`" is not evidence of a correct policy. Reflection, '
+                "which looks more careful, is the one that hands the data over.",
+                "The refusal is indiscriminate. The legitimate first-party origin "
+                f"({lab.settings.app_origin}) attempting the identical read against this "
+                f"deployment: {legitimate}. A wildcard with credentials is not a lax "
+                "policy — it is a broken one.",
+            ),
+        ),
+    ]
+
+
+def run_samesite_contrast(lab: BrowserLab, *, start: int) -> list[ScenarioResult]:
+    """`FR-013` — `SameSite=Lax` withholds the credential, not the cross-origin read."""
+    _sign_in_everywhere(lab)
+    return [
+        attacker_read(
+            lab,
+            name="SameSite=Lax contrast",
+            attacker_origin=lab.settings.attacker_origin,
+            target="vulnerable",
+            index=start,
+            shape="reflect",
+            extra_notes=(
+                "The victim's session cookie was reissued as SameSite=Lax. Nothing else "
+                "changed: the misconfiguration is the same reflection shape as before.",
+                "The cross-origin read still succeeded — the browser released the response "
+                "to the attacker's origin, exactly as the policy told it to. There is "
+                "simply nothing in it, because Lax withheld the cookie on a cross-site "
+                "request and the API answered an unauthenticated 401.",
+                "SameSite withholds the credential; it does not repair the origin policy. "
+                "For the many real APIs that must set SameSite=None; Secure — a separate "
+                "front-end domain, an embedded third-party surface, a deliberately "
+                "cross-site API — it withholds nothing at all.",
+            ),
+        ),
+    ]
+
+
+def _payout_tail_from(lab: BrowserLab, origin: str, target: str) -> tuple[str | None, str]:
+    """Read the victim's payout tail through a page, and screenshot what it saw."""
+    page, _ = lab.open(f"{origin}/?api={target}")
+    page.wait_for_selector(_SETTLED)
+    tail = page.get_attribute("body", "data-payout-tail") or None
+    shot = lab.capture(page, f"probe-{origin.removeprefix('https://').replace('.', '-')}-{target}")
+    page.close()
+    return tail, shot
+
+
+def _first_party_payout_tail(lab: BrowserLab) -> str | None:
+    page, _ = lab.open(f"{lab.settings.app_origin}/")
+    page.wait_for_selector(_SETTLED)
+    tail = page.get_attribute("body", "data-payout-tail") or None
+    page.close()
+    return tail
+
+
+def run_simple_request_control(lab: BrowserLab, *, start: int) -> list[ScenarioResult]:
+    """`FR-012` — a simple cross-origin POST lands with no preflight.
+
+    Runs under the sloppy shape, which blocks the plain attacker origin. That is
+    deliberate: the attacker must be shown obtaining *nothing* from the response while
+    the write happens anyway, because "I could not read the answer" is exactly the
+    reassurance this control is here to remove.
+    """
+    _sign_in_everywhere(lab)
+
+    # Observed through an origin this shape does grant, since the attacker's own page is
+    # blocked from reading anything.
+    before, _ = _payout_tail_from(lab, lab.settings.attacker_suffix_origin, "vulnerable")
+    vulnerable = _simple_post(lab, target="vulnerable", index=start, shape="sloppy")
+    after, confirmation = _payout_tail_from(lab, lab.settings.attacker_suffix_origin, "vulnerable")
+
+    secure_before = _first_party_payout_tail(lab)
+    secure = _simple_post(lab, target="secure", index=start + 1, shape="sloppy")
+    secure_after = _first_party_payout_tail(lab)
+
+    changed = before is not None and after is not None and before != after
+    vulnerable = replace(
+        vulnerable,
+        state_changed=changed,
+        verdict="vulnerable" if changed else vulnerable.verdict,
+        notes=(
+            *vulnerable.notes,
+            f"The victim's payout account tail went from {before} to {after} — confirmed "
+            f"by re-reading the payslip from an origin this shape does grant "
+            f"({confirmation}). The attacker never saw the response, and changed the "
+            "victim's bank details anyway.",
+        ),
+    )
+    secure = replace(
+        secure,
+        state_changed=secure_before != secure_after,
+        notes=(
+            *secure.notes,
+            f"Canonical state is unchanged: the payout tail is {secure_after}, as it was "
+            f"before ({secure_before}). The secure route requires a non-simple header and "
+            "a matching CSRF token, neither of which a simple cross-site request can "
+            "carry.",
+        ),
+    )
+    return [vulnerable, secure]
+
+
+def _simple_post(lab: BrowserLab, *, target: str, index: int, shape: str) -> ScenarioResult:
+    api_origin = _api_origin(lab, target)
+    attacker_origin = lab.settings.attacker_origin
+    page, log = lab.open(f"{attacker_origin}/?api={target}&mode=simplepost")
+    page.wait_for_selector(_SETTLED)
+
+    released = page.get_attribute("body", "data-outcome") == "released"
+    observation = log.observation_for(PAYOUT_PATH)
+    preflight = log.saw_preflight(PAYOUT_PATH)
+    screenshot = lab.capture(page, f"{index:02d}-simple-post-{target}")
+    page.close()
+
+    notes = [
+        "A simple request: a CORS-safelisted content type and no custom header. The "
+        "browser sent no preflight, because there was nothing to ask permission for — an "
+        "HTML form could have made this request in 1997.",
+    ]
+    if not released:
+        notes.append(
+            "This page could not read the response. CORS did its job perfectly, and CORS "
+            "was never what stood between this request and the server."
+        )
+
+    return ScenarioResult(
+        name=f"simple cross-origin POST — {target} API",
+        summary=(
+            f"{attacker_origin} sends a state-changing POST to {api_origin} as a simple "
+            "request, with the victim's own session cookie and no preflight."
+        ),
+        calling_origin=attacker_origin,
+        credential_mode="include",
+        preflight=preflight,
+        browser_released=released,
+        victim_data_rendered=False,
+        state_changed=False,
+        # Always the server, in both directions — one processed the write, the other
+        # refused it. The browser's only involvement was in the response, which is
+        # precisely the control's point: CORS was never in this decision.
+        decided_by="server",
+        verdict="secure",
+        observation=observation,
+        screenshot=screenshot,
+        shape=SHAPE_LABELS.get(shape, shape),
+        decider_detail=(
+            "it processed the write on a valid session alone, asking nothing about where "
+            "the request came from"
+            if target == "vulnerable"
+            else "it refused the write, because the route requires a non-simple header "
+            "and a matching CSRF token"
+        ),
+        notes=tuple(notes),
+    )
+
+
+PASS_RUNNERS: Final[dict[str, Callable[..., list[ScenarioResult]]]] = {
     "reflect": run_reflect_shape,
     "sloppy": run_sloppy_shape,
     "null": run_null_shape,
+    "wildcard": run_wildcard_control,
+    "simple-post": run_simple_request_control,
+    "samesite-lax": run_samesite_contrast,
 }

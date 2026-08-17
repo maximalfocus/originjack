@@ -16,7 +16,7 @@ from pathlib import Path
 from originjack.harness import store, transcript
 from originjack.harness.lab import BrowserLab, LabSettings
 from originjack.harness.models import NetworkObservation, ScenarioResult
-from originjack.harness.scenarios import SHAPE_RUNNERS, run_secure_baseline
+from originjack.harness.scenarios import PASS_RUNNERS, run_secure_baseline
 
 __all__ = [
     "BrowserLab",
@@ -29,8 +29,8 @@ __all__ = [
 
 SECURE_ONLY_SUBJECT = "the secure API only — no vulnerable service or attacker origin is running"
 VULNERABLE_SUBJECT = (
-    "the secure API and the opt-in vulnerable API across its misconfiguration shapes — "
-    "started only after two deliberate opt-in actions"
+    "the secure API and the opt-in vulnerable API across its misconfiguration shapes and "
+    "the negative controls — started only after two deliberate opt-in actions"
 )
 
 TRANSCRIPT_NAME = "transcript.txt"
@@ -67,9 +67,9 @@ def run(settings: LabSettings | None = None) -> HarnessRun:
     with BrowserLab(resolved) as lab:
         collected: list[ScenarioResult] = []
         if resolved.include_vulnerable:
-            runner = SHAPE_RUNNERS.get(resolved.vulnerable_shape)
+            runner = PASS_RUNNERS.get(resolved.pass_label)
             if runner is None:
-                raise ValueError(f"no scenarios for vulnerable shape {resolved.vulnerable_shape!r}")
+                raise ValueError(f"no scenarios for pass {resolved.pass_label!r}")
             # The exposure first, then the reference — the order the walkthrough tells it.
             collected.extend(runner(lab, start=start))
         if resolved.pass_index <= 1:
@@ -79,7 +79,7 @@ def run(settings: LabSettings | None = None) -> HarnessRun:
         results = tuple(collected)
         engine = lab.engine
 
-    label = resolved.vulnerable_shape if resolved.include_vulnerable else "secure-baseline"
+    label = resolved.pass_label if resolved.include_vulnerable else "secure-baseline"
     store.save(
         resolved.artifacts_dir,
         pass_index=resolved.pass_index,

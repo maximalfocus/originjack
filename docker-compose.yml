@@ -125,7 +125,9 @@ services:
       # plain attacker origin is *blocked* under it, which cannot be true while shape 1
       # is live. The demonstration recreates this service once per shape.
       ORIGINJACK_VULNERABLE_SHAPE: ${ORIGINJACK_VULNERABLE_SHAPE:-reflect}
-      ORIGINJACK_SESSION_SAMESITE: "none"
+      # `none` is the realistic setting for an API whose front-end is on another origin.
+      # The FR-013 contrast recreates this service with `lax` and changes nothing else.
+      ORIGINJACK_SESSION_SAMESITE: ${ORIGINJACK_LEGACY_SAMESITE:-none}
     command:
       - uvicorn
       # A factory, so the ALLOW_VULNERABLE_DEMO gate fires at start-up and the module

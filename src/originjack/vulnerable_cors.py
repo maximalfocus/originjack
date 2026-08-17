@@ -21,7 +21,7 @@ from originjack.cors import REFUSED, CorsDecision, CorsPolicy
 #: The misconfiguration shapes this demonstration ships. Each is a different amount of
 #: effort spent arriving at the same mistake — and the later two are more dangerous than
 #: the first, because they arrive with the reassurance of looking deliberate.
-VulnerableShape = Literal["reflect", "sloppy", "null"]
+VulnerableShape = Literal["reflect", "sloppy", "null", "wildcard"]
 
 DEFAULT_SHAPE: Final[VulnerableShape] = "reflect"
 
@@ -181,10 +181,65 @@ class NullOriginPolicy:
         return REFUSED
 
 
-_SHAPES: Final[dict[str, type[ReflectedOriginPolicy | SloppyMatchPolicy | NullOriginPolicy]]] = {
+@dataclass(frozen=True, slots=True)
+class WildcardCredentialsPolicy:
+    """The **negative control** — the shape everyone worries about, which does not work.
+
+    Returns ``Access-Control-Allow-Origin: *`` together with
+    ``Access-Control-Allow-Credentials: true``. The specification forbids that
+    combination and the **browser** refuses it, so a credentialed read fails even though
+    the server granted every origin on earth.
+
+    Two things follow, and both are worth saying out loud:
+
+    * the wildcard is *not* the dangerous shape — it fails safe under credentials; and
+    * "we never use ``*``" is therefore not evidence of a correct policy. Reflection,
+      which looks more careful, is the one that hands the data over.
+    """
+
+    allowed_methods: tuple[str, ...]
+    allowed_headers: tuple[str, ...]
+    max_age: int
+    _name: str = field(default="vulnerable-wildcard-credentials", init=False, repr=False)
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> WildcardCredentialsPolicy:
+        return cls(
+            allowed_methods=settings.allowed_methods,
+            allowed_headers=settings.allowed_headers,
+            max_age=settings.preflight_max_age,
+        )
+
+    def decide(self, origin: str | None) -> CorsDecision:
+        if origin is None:
+            return REFUSED
+
+        return CorsDecision(
+            granted=True,
+            allow_origin="*",
+            allow_credentials=True,
+            allow_methods=self.allowed_methods,
+            allow_headers=self.allowed_headers,
+            max_age=self.max_age,
+        )
+
+
+_SHAPES: Final[
+    dict[
+        str,
+        type[
+            ReflectedOriginPolicy | SloppyMatchPolicy | NullOriginPolicy | WildcardCredentialsPolicy
+        ],
+    ]
+] = {
     "reflect": ReflectedOriginPolicy,
     "sloppy": SloppyMatchPolicy,
     "null": NullOriginPolicy,
+    "wildcard": WildcardCredentialsPolicy,
 }
 
 

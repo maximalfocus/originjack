@@ -21,6 +21,7 @@ from fastapi import FastAPI
 
 from originjack.api import create_app
 from originjack.config import Settings
+from originjack.statechange import SessionOnlyWrites
 from originjack.vulnerable_cors import DEFAULT_SHAPE, policy_for_shape
 
 ACKNOWLEDGEMENT_ENV = "ALLOW_VULNERABLE_DEMO"
@@ -57,4 +58,11 @@ def build(env: dict[str, str] | None = None) -> FastAPI:
     require_acknowledgement(source)
     settings = Settings.from_env(env)
     shape = source.get(SHAPE_ENV, DEFAULT_SHAPE)
-    return create_app(settings=settings, policy=policy_for_shape(shape, settings))
+    return create_app(
+        settings=settings,
+        policy=policy_for_shape(shape, settings),
+        # The legacy deployment also predates CSRF protection on its write route. That is
+        # a second, independent fault — and the only way to show that CORS was never
+        # standing between a cross-site request and a state change.
+        writes=SessionOnlyWrites(),
+    )

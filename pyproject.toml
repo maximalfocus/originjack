@@ -79,5 +79,5 @@ markers = [
   "boundary: exercises the running containers over real HTTPS (requires ORIGINJACK_API_BASE)",
   "browser: drives a real headless browser (requires the browser image and ORIGINJACK_ARTIFACTS)",
   "vulnerable: needs the opt-in vulnerable services (requires ORIGINJACK_INCLUDE_VULNERABLE)",
-  "shape(name): only runs while that misconfiguration shape is the live one",
+  "demo_pass(name): only runs while that pass of the multi-shape run is the live one",
 ]

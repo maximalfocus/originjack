@@ -12,7 +12,7 @@ import pytest
 
 from originjack.harness import HarnessRun
 
-pytestmark = [pytest.mark.browser, pytest.mark.vulnerable, pytest.mark.shape("null")]
+pytestmark = [pytest.mark.browser, pytest.mark.vulnerable, pytest.mark.demo_pass("null")]
 
 FRAME_VULNERABLE = "null origin — sandboxed frame"
 FRAME_SECURE = "null origin — sandboxed frame vs secure API"

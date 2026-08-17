@@ -64,6 +64,10 @@ class LabSettings:
     include_vulnerable: bool = False
     #: Which misconfiguration shape the vulnerable API is serving right now.
     vulnerable_shape: str = "reflect"
+    #: Which pass of the run this is, by name. Usually the shape, but the negative
+    #: controls reuse a shape under a different label — the simple-request control runs
+    #: under the sloppy shape, so that the attacker demonstrably reads nothing.
+    pass_label: str = "reflect"
     #: Which pass of the multi-shape run this is. Pass 1 clears any earlier results.
     pass_index: int = 1
 
@@ -93,6 +97,9 @@ class LabSettings:
                 "ORIGINJACK_ATTACKER_SUFFIX_BASE", "https://notmeridianpay.example"
             ),
             vulnerable_shape=source.get("ORIGINJACK_VULNERABLE_SHAPE", "reflect").strip()
+            or "reflect",
+            pass_label=source.get("ORIGINJACK_PASS_LABEL", "").strip()
+            or source.get("ORIGINJACK_VULNERABLE_SHAPE", "reflect").strip()
             or "reflect",
             pass_index=int(source.get("ORIGINJACK_PASS", "1")),
             # The vulnerable services only exist when the operator opted in twice, so the
@@ -372,15 +379,21 @@ class BrowserLab:
         somebody else's origin can do with a session that already exists, so the session
         has to already exist.
 
-        Done through page script on the first-party origin rather than through
-        Playwright's API request context, for two reasons. The request context is backed
-        by the Node driver, which knows nothing about the demo CA in Chromium's NSS store.
-        And more to the point, this is how it happens in life: the victim signed in, in
-        their own browser, in another tab.
+        Done through page script rather than through Playwright's API request context,
+        which is backed by the Node driver and knows nothing about the demo CA in
+        Chromium's NSS store. And more to the point, this is how it happens in life: the
+        victim signed in, in their own browser, in another tab.
+
+        The request is made **same-origin**, from a document on the API's own origin. That
+        is both faithful and necessary: signing in is not the thing under demonstration,
+        and one of the shapes — the wildcard with credentials — refuses every credentialed
+        cross-origin request there is, including a legitimate one. Establishing the
+        session through the policy under test would make the setup fail for the very
+        reason the scenario exists to show.
         """
         page = self.context.new_page()
         try:
-            page.goto(f"{self.settings.app_origin}/healthz", wait_until="domcontentloaded")
+            page.goto(f"{api_origin}/healthz", wait_until="domcontentloaded")
             status = page.evaluate(
                 """async ({ api, employeeId, password }) => {
                     const response = await fetch(`${api}/session`, {
@@ -403,6 +416,35 @@ class BrowserLab:
             raise RuntimeError(
                 f"could not establish the victim's session on {api_origin}: HTTP {status}"
             )
+
+    def probe_credentialed_read(self, *, page_origin: str, api_origin: str) -> str:
+        """Attempt a credentialed cross-origin read from ``page_origin`` and report it.
+
+        Returns ``"released: <status>"`` or ``"blocked: <error>"``. Used to record a
+        consequence in passing — chiefly that a shape which breaks attackers may be
+        breaking the legitimate application too.
+        """
+        page = self.context.new_page()
+        try:
+            page.goto(f"{page_origin}/", wait_until="domcontentloaded")
+            return str(
+                page.evaluate(
+                    """async (api) => {
+                        try {
+                            const response = await fetch(`${api}/me/payslip`, {
+                                method: "GET",
+                                credentials: "include",
+                            });
+                            return `released: HTTP ${response.status}`;
+                        } catch (error) {
+                            return `blocked: ${error.name}: ${error.message}`;
+                        }
+                    }""",
+                    api_origin,
+                )
+            )
+        finally:
+            page.close()
 
     def capture(self, page: Page, name: str) -> str:
         """Screenshot the page and return the artifact's path relative to the run."""

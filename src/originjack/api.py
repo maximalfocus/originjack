@@ -22,6 +22,7 @@ from originjack.config import CSRF_HEADER_NAME, SESSION_COOKIE_NAME, Settings
 from originjack.cors import CorsPolicy, response_headers
 from originjack.domain import PayrollDirectory, UnknownEmployeeError
 from originjack.sessions import Session, SessionError
+from originjack.statechange import CsrfProtectedWrites, StateChangePolicy
 
 MAX_BODY_BYTES: Final = 4096
 
@@ -117,9 +118,20 @@ def build_session_cookie(token: str, *, samesite: str, max_age: int) -> str:
     )
 
 
-def create_app(*, settings: Settings, policy: CorsPolicy) -> FastAPI:
-    """Build the API with ``policy`` installed as its cross-origin decision."""
+def create_app(
+    *,
+    settings: Settings,
+    policy: CorsPolicy,
+    writes: StateChangePolicy | None = None,
+) -> FastAPI:
+    """Build the API with ``policy`` deciding cross-origin reads and ``writes`` guarding
+    state changes.
+
+    Two policy objects, because the two questions are genuinely different: CORS decides
+    whether a page may **read** a response, and never whether a request may be **sent**.
+    """
     directory = PayrollDirectory.from_fixtures()
+    write_policy: StateChangePolicy = CsrfProtectedWrites() if writes is None else writes
 
     app = FastAPI(
         title="Meridian Payroll API (fictional demonstration service)",
@@ -130,6 +142,7 @@ def create_app(*, settings: Settings, policy: CorsPolicy) -> FastAPI:
     )
     app.state.settings = settings
     app.state.policy = policy
+    app.state.writes = write_policy
     app.state.directory = directory
     app.add_middleware(CrossOriginBoundary, policy=policy)
 
@@ -160,7 +173,7 @@ def create_app(*, settings: Settings, policy: CorsPolicy) -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> JSONResponse:
-        return JSONResponse({"status": "ok", "policy": policy.name})
+        return JSONResponse({"status": "ok", "policy": policy.name, "writes": write_policy.name})
 
     @app.options("/{rest_of_path:path}")
     async def preflight(rest_of_path: str) -> Response:
@@ -250,11 +263,13 @@ def create_app(*, settings: Settings, policy: CorsPolicy) -> FastAPI:
             return _generic_unauthorized()
 
         media_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
-        if media_type != "application/json":
-            return JSONResponse({"error": "unsupported_media_type"}, status_code=415)
-
-        if not sessions.csrf_token_matches(session, request.headers.get(CSRF_HEADER_NAME)):
-            return JSONResponse({"error": "forbidden"}, status_code=403)
+        refusal = write_policy.refuse(
+            media_type=media_type,
+            presented_csrf=request.headers.get(CSRF_HEADER_NAME),
+            session=session,
+        )
+        if refusal is not None:
+            return JSONResponse({"error": refusal.error}, status_code=refusal.status_code)
 
         body = await read_json_body(request)
         if body is None:

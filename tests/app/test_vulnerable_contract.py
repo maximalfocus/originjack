@@ -18,6 +18,7 @@ from originjack.audit import ORIGIN_REFUSED_EVENT
 from originjack.config import FIRST_PARTY_ORIGIN, SESSION_COOKIE_NAME, Settings
 from originjack.cors import ExactMatchAllowlistPolicy
 from originjack.domain import VICTIM_EMPLOYEE_ID
+from originjack.statechange import SessionOnlyWrites
 from originjack.vulnerable_cors import ReflectedOriginPolicy
 from tests.conftest import ATTACKER_ORIGINS
 
@@ -26,7 +27,11 @@ DEMO_PASSWORD = "demo-only-password"
 
 @pytest.fixture
 def vulnerable_app(settings: Settings) -> FastAPI:
-    return create_app(settings=settings, policy=ReflectedOriginPolicy.from_settings(settings))
+    return create_app(
+        settings=settings,
+        policy=ReflectedOriginPolicy.from_settings(settings),
+        writes=SessionOnlyWrites(),
+    )
 
 
 @pytest.fixture
@@ -127,3 +132,88 @@ def test_the_vulnerable_api_keeps_the_same_authentication_contract(
     for response in responses:
         assert response.status_code == 401
         assert response.json() == {"error": "unauthorized"}
+
+
+# --- FR-012: the legacy deployment also has no CSRF protection ------------------------
+#
+# A second, independent fault, and the only way to show that CORS was never standing
+# between a cross-site request and a state change. See the PR for the PRD reading taken.
+
+SIMPLE_REQUEST_HEADERS = {"content-type": "text/plain;charset=UTF-8"}
+REDIRECTED = '{"bank_name": "Redirected Holdings (fictional)", "account_tail": "0001"}'
+
+
+def test_the_legacy_deployment_accepts_a_simple_cross_site_post(
+    vulnerable_client: TestClient, vulnerable_app: FastAPI
+) -> None:
+    cookie = _login(vulnerable_client)
+    before = vulnerable_app.state.directory.canonical_state()
+
+    response = vulnerable_client.post(
+        "/me/payout-account",
+        headers={
+            "origin": ATTACKER_ORIGINS[0],
+            **SIMPLE_REQUEST_HEADERS,
+            **_cookie(cookie),
+        },
+        content=REDIRECTED,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["account_tail"] == "0001"
+    assert vulnerable_app.state.directory.canonical_state() != before
+
+
+def test_the_secure_deployment_refuses_the_identical_request(
+    client: TestClient, secure_app: FastAPI
+) -> None:
+    cookie = _login(client)
+    before = secure_app.state.directory.canonical_state()
+
+    response = client.post(
+        "/me/payout-account",
+        headers={
+            "origin": ATTACKER_ORIGINS[0],
+            **SIMPLE_REQUEST_HEADERS,
+            **_cookie(cookie),
+        },
+        content=REDIRECTED,
+    )
+
+    assert response.status_code == 415
+    assert secure_app.state.directory.canonical_state() == before
+
+
+def test_the_legacy_deployment_still_requires_a_session(
+    vulnerable_client: TestClient, vulnerable_app: FastAPI
+) -> None:
+    """It is missing CSRF protection, not authentication."""
+    before = vulnerable_app.state.directory.canonical_state()
+
+    response = vulnerable_client.post(
+        "/me/payout-account", headers=SIMPLE_REQUEST_HEADERS, content=REDIRECTED
+    )
+
+    assert response.status_code == 401
+    assert vulnerable_app.state.directory.canonical_state() == before
+
+
+def test_a_fresh_directory_discards_the_attackers_change() -> None:
+    """`NFR-001`: the one mutable thing is a disposable fixture, rebuilt every run."""
+    from originjack.domain import PayrollDirectory
+
+    pristine = PayrollDirectory.from_fixtures().canonical_state()
+    mutated = PayrollDirectory.from_fixtures()
+    mutated.set_payout_account(
+        VICTIM_EMPLOYEE_ID, bank_name="Redirected Holdings (fictional)", account_tail="0001"
+    )
+
+    assert mutated.canonical_state() != pristine
+    assert PayrollDirectory.from_fixtures().canonical_state() == pristine
+
+
+def test_the_two_deployments_report_their_write_policies(
+    client: TestClient, vulnerable_client: TestClient
+) -> None:
+    assert client.get("/healthz").json()["writes"] == "csrf-protected-writes"
+    assert vulnerable_client.get("/healthz").json()["writes"] == "legacy-session-only-writes"

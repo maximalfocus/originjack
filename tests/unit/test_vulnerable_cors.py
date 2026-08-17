@@ -15,6 +15,7 @@ from originjack.vulnerable_cors import (
     NullOriginPolicy,
     ReflectedOriginPolicy,
     SloppyMatchPolicy,
+    WildcardCredentialsPolicy,
     policy_for_shape,
 )
 from tests.conftest import ATTACKER_ORIGINS
@@ -172,3 +173,45 @@ def test_the_null_shape_returns_the_allowlisted_value(null_shape: NullOriginPoli
 def test_every_shape_is_reachable_by_name(settings: Settings) -> None:
     assert policy_for_shape("sloppy", settings).name == "vulnerable-sloppy-match"
     assert policy_for_shape("null", settings).name == "vulnerable-null-origin"
+
+
+# --- the negative control: wildcard with credentials ----------------------------------
+
+
+@pytest.fixture
+def wildcard(settings: Settings) -> WildcardCredentialsPolicy:
+    return WildcardCredentialsPolicy.from_settings(settings)
+
+
+@pytest.mark.parametrize("origin", [*ATTACKER_ORIGINS, FIRST_PARTY_ORIGIN, "null"])
+def test_the_wildcard_shape_grants_everything(
+    wildcard: WildcardCredentialsPolicy, origin: str
+) -> None:
+    """It really does grant. The refusal happens later, and elsewhere."""
+    decision = wildcard.decide(origin)
+
+    assert decision.granted
+    assert decision.allow_origin == "*"
+    assert decision.allow_credentials
+
+
+def test_the_wildcard_shape_emits_the_combination_the_browser_forbids(
+    wildcard: WildcardCredentialsPolicy,
+) -> None:
+    """A server can send this. A browser will not act on it — which is the lesson."""
+    headers = response_headers(wildcard.decide(PLAIN_ATTACKER), preflight=False)
+
+    assert headers["access-control-allow-origin"] == "*"
+    assert headers["access-control-allow-credentials"] == "true"
+
+
+def test_the_wildcard_shape_never_names_a_caller(
+    wildcard: WildcardCredentialsPolicy,
+) -> None:
+    """Unlike reflection, it discloses nothing about who asked — and is far less dangerous."""
+    for origin in ATTACKER_ORIGINS:
+        assert wildcard.decide(origin).allow_origin == "*"
+
+
+def test_the_wildcard_shape_is_reachable_by_name(settings: Settings) -> None:
+    assert policy_for_shape("wildcard", settings).name == "vulnerable-wildcard-credentials"
