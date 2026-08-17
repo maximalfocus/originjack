@@ -181,6 +181,12 @@ fi
 
 copy_artifacts
 
+# The comparison reads the accumulated scenarios, so it runs once, after every pass.
+if [ "$WITH_VULNERABLE" = true ] && [ "$browser_rc" -eq 0 ]; then
+  echo
+  compose run --rm --no-deps browser originjack compare
+fi
+
 if [ "$browser_rc" -ne 0 ]; then
   echo "==> browser harness failed (exit $browser_rc); see ./$ARTIFACTS_DIR" >&2
   exit "$browser_rc"
