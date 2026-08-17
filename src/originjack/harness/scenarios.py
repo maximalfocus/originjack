@@ -5,12 +5,14 @@ against the real network. Nothing in this module asserts a response header and c
 result: the header is captured as *supporting* evidence beside what the page could
 actually render.
 
-This slice runs the secure API only. The vulnerable ladder and its negative controls are
-added beside these scenarios in a later slice.
+The secure-path scenarios always run. The vulnerable ladder runs only when the operator
+opted in twice, and then once per misconfiguration shape, because the shapes are mutually
+exclusive.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Final
 
 from playwright.sync_api import Page
@@ -205,45 +207,77 @@ def run_secure_baseline(lab: BrowserLab, *, start: int = 1) -> list[ScenarioResu
 
 # --- the vulnerable ladder ------------------------------------------------------------
 #
-# Only reachable when the operator opted in twice. Everything below runs the *same*
-# attacker page against two API deployments that differ in one object.
+# Only reachable when the operator opted in twice. The three shapes are mutually
+# exclusive — shape 2's whole lesson is that the plain attacker origin is *blocked* under
+# it — so the vulnerable API is recreated between them and the harness runs once per
+# shape, accumulating into one transcript.
 
-ATTACKER_SCENARIOS: Final[dict[str, str]] = {
-    "vulnerable": "attacker read (vulnerable API)",
-    "secure": "attacker read (secure API)",
+SHAPE_LABELS: Final[dict[str, str]] = {
+    "reflect": "shape 1 — origin reflection with credentials",
+    "sloppy": "shape 2 — sloppy allowlist match",
+    "null": "shape 3 — allowlisted `null` origin",
+}
+
+#: How each shape actually granted, in its own terms. The three fail differently, and one
+#: phrasing for all of them would misdescribe two.
+GRANT_BASIS: Final[dict[str, str]] = {
+    "reflect": "it echoed the caller's own origin back as an allowed one",
+    "sloppy": (
+        "the caller's hostname contained the corporate domain, which is all its "
+        "unanchored match asked for"
+    ),
+    "null": "`null` was in its accepted set, and any page can arrange to send it",
 }
 
 
-def attacker_read(lab: BrowserLab, *, target: str, index: int) -> ScenarioResult:
+def _api_origin(lab: BrowserLab, target: str) -> str:
+    return lab.settings.vulnerable_api_origin if target == "vulnerable" else lab.settings.api_origin
+
+
+def attacker_read(
+    lab: BrowserLab,
+    *,
+    name: str,
+    attacker_origin: str,
+    target: str,
+    index: int,
+    shape: str,
+    mode: str = "direct",
+    extra_notes: tuple[str, ...] = (),
+) -> ScenarioResult:
     """The attacker's page performs the credentialed cross-origin read.
 
-    One page, one query parameter, two deployments. Everything the browser does with the
-    result follows from the two response headers the API chose to send.
+    One page, two query parameters, and everything that follows is decided by the
+    response headers the API chose to send.
     """
-    api_origin = (
-        lab.settings.vulnerable_api_origin if target == "vulnerable" else lab.settings.api_origin
-    )
-    page, log = lab.open(f"{lab.settings.attacker_origin}/?api={target}")
+    api_origin = _api_origin(lab, target)
+    slug = attacker_origin.removeprefix("https://").replace(".", "-")
+    page, log = lab.open(f"{attacker_origin}/?api={target}&mode={mode}")
 
     page.wait_for_selector(_SETTLED)
 
     released = page.get_attribute("body", "data-outcome") == "released"
     rendered = _rendered_victim_data(page)
+    frame_origin = page.get_attribute("body", "data-frame-origin") or None
     observation = log.observation_for(PAYSLIP_PATH)
-    screenshot = lab.capture(page, f"{index:02d}-attacker-read-{target}")
+    screenshot = lab.capture(page, f"{index:02d}-{shape}-{slug}-{target}")
     page.close()
 
-    notes = [
-        "The same attacker page, the same URL path, the same credentials, the same "
-        "logged-in victim. Only the API deployment differs.",
-    ]
+    notes = list(extra_notes)
+    if mode == "iframe":
+        notes.append(
+            'The read was made from a frame created with sandbox="allow-scripts" and no '
+            "allow-same-origin, so the browser has no origin to report for it."
+        )
+        if frame_origin:
+            notes.append(
+                f"The browser reported that frame's origin to its parent as: {frame_origin}."
+            )
     if released and observation is not None:
         notes.append(
-            f"The API answered {observation.status} with "
-            f"Access-Control-Allow-Origin: {observation.allow_origin} — the attacker's own "
-            "origin, echoed back — and Access-Control-Allow-Credentials: "
-            f"{observation.allow_credentials}. Those two headers are the whole "
-            "vulnerability; the browser did exactly what it was told."
+            f"{api_origin} answered {observation.status} with Access-Control-Allow-Origin: "
+            f"{observation.allow_origin} and Access-Control-Allow-Credentials: "
+            f"{observation.allow_credentials}, so the browser released the response."
         )
         notes.append(
             "The victim's net pay, payout-account tail, and session API token are now "
@@ -251,47 +285,168 @@ def attacker_read(lab: BrowserLab, *, target: str, index: int) -> ScenarioResult
         )
     elif observation is not None:
         notes.append(
-            f"The API answered {observation.status} with no Access-Control-Allow-Origin, "
-            "so the browser withheld the response and the page obtained nothing."
+            f"{api_origin} answered {observation.status} with no "
+            "Access-Control-Allow-Origin, so the browser withheld the response and the "
+            "page obtained nothing."
         )
     if observation is not None and observation.failure:
         notes.append(f"The page was told only: {observation.failure}.")
 
     return ScenarioResult(
-        name=ATTACKER_SCENARIOS[target],
+        name=name,
         summary=(
-            f"An attacker page on an unrelated origin attempts the victim's payslip from "
-            f"{api_origin} (the {target} deployment), with the victim's own session cookie."
+            f"{attacker_origin} attempts the victim's payslip from {api_origin} "
+            f"(the {target} deployment), with the victim's own session cookie."
         ),
-        calling_origin=lab.settings.attacker_origin,
+        calling_origin=attacker_origin if mode == "direct" else f"{attacker_origin} (sandboxed)",
         credential_mode="include",
         preflight=log.saw_preflight(PAYSLIP_PATH),
         browser_released=released,
         victim_data_rendered=rendered and released,
         state_changed=False,
-        # When the data is released, the *server* decided that: it granted an origin it
-        # never checked. When it is withheld, the browser decided.
+        # When the data is released, the *server* decided that. When it is withheld, the
+        # browser did.
         decided_by="server" if released else "browser",
         verdict="vulnerable" if (released and rendered) else "secure",
         observation=observation,
         screenshot=screenshot,
+        shape=SHAPE_LABELS.get(shape, shape),
+        decider_detail=GRANT_BASIS.get(shape) if released else None,
         notes=tuple(notes),
     )
 
 
-def run_vulnerable_ladder(lab: BrowserLab) -> list[ScenarioResult]:
-    """The exposure, then the identical attempt against the API that gets it right."""
-    lab.sign_in(
-        lab.settings.vulnerable_api_origin,
-        employee_id=VICTIM_EMPLOYEE_ID,
-        demo_password=DEMO_PASSWORD,
-    )
-    lab.sign_in(
-        lab.settings.api_origin,
-        employee_id=VICTIM_EMPLOYEE_ID,
-        demo_password=DEMO_PASSWORD,
-    )
+def _sign_in_everywhere(lab: BrowserLab) -> None:
+    for origin in (lab.settings.vulnerable_api_origin, lab.settings.api_origin):
+        lab.sign_in(origin, employee_id=VICTIM_EMPLOYEE_ID, demo_password=DEMO_PASSWORD)
+
+
+def run_reflect_shape(lab: BrowserLab, *, start: int) -> list[ScenarioResult]:
+    """Shape 1: the exposure, then the identical attempt against the API that gets it right."""
+    _sign_in_everywhere(lab)
     return [
-        attacker_read(lab, target="vulnerable", index=1),
-        attacker_read(lab, target="secure", index=2),
+        attacker_read(
+            lab,
+            name="attacker read (vulnerable API)",
+            attacker_origin=lab.settings.attacker_origin,
+            target="vulnerable",
+            index=start,
+            shape="reflect",
+        ),
+        attacker_read(
+            lab,
+            name="attacker read (secure API)",
+            attacker_origin=lab.settings.attacker_origin,
+            target="secure",
+            index=start + 1,
+            shape="reflect",
+        ),
     ]
+
+
+def run_sloppy_shape(lab: BrowserLab, *, start: int) -> list[ScenarioResult]:
+    """Shape 2: the plain attacker origin is blocked, and two lookalikes are not."""
+    _sign_in_everywhere(lab)
+    return [
+        attacker_read(
+            lab,
+            name="sloppy match — plain attacker origin",
+            attacker_origin=lab.settings.attacker_origin,
+            target="vulnerable",
+            index=start,
+            shape="sloppy",
+            extra_notes=(
+                "This is the reassuring result, and it is the trap. The obvious attack "
+                "stopped working, so the configuration looks repaired. Nothing has been "
+                "repaired.",
+            ),
+        ),
+        attacker_read(
+            lab,
+            name="sloppy match — prefix lookalike",
+            attacker_origin=lab.settings.attacker_prefix_origin,
+            target="vulnerable",
+            index=start + 1,
+            shape="sloppy",
+            extra_notes=(
+                "The corporate domain appears in the middle of a hostname the attacker "
+                "owns outright, which is all an unanchored match asks for.",
+            ),
+        ),
+        attacker_read(
+            lab,
+            name="sloppy match — suffix lookalike",
+            attacker_origin=lab.settings.attacker_suffix_origin,
+            target="vulnerable",
+            index=start + 2,
+            shape="sloppy",
+            extra_notes=(
+                "And here it appears at the end of one. A check that forgot the leading "
+                "dot cannot tell these two domains apart.",
+            ),
+        ),
+        attacker_read(
+            lab,
+            name="sloppy match — prefix lookalike vs secure API",
+            attacker_origin=lab.settings.attacker_prefix_origin,
+            target="secure",
+            index=start + 3,
+            shape="sloppy",
+        ),
+        attacker_read(
+            lab,
+            name="sloppy match — suffix lookalike vs secure API",
+            attacker_origin=lab.settings.attacker_suffix_origin,
+            target="secure",
+            index=start + 4,
+            shape="sloppy",
+        ),
+    ]
+
+
+def run_null_shape(lab: BrowserLab, *, start: int) -> list[ScenarioResult]:
+    """Shape 3: an exact-match allowlist with one entry too many."""
+    _sign_in_everywhere(lab)
+    return [
+        attacker_read(
+            lab,
+            name="null origin — sandboxed frame",
+            attacker_origin=lab.settings.attacker_origin,
+            target="vulnerable",
+            index=start,
+            shape="null",
+            mode="iframe",
+            extra_notes=(
+                "This shape compares whole strings against a fixed server-side set, "
+                "exactly as it should. Someone added one entry to that set.",
+            ),
+        ),
+        attacker_read(
+            lab,
+            name="null origin — sandboxed frame vs secure API",
+            attacker_origin=lab.settings.attacker_origin,
+            target="secure",
+            index=start + 1,
+            shape="null",
+            mode="iframe",
+        ),
+        attacker_read(
+            lab,
+            name="null origin — plain attacker origin",
+            attacker_origin=lab.settings.attacker_origin,
+            target="vulnerable",
+            index=start + 2,
+            shape="null",
+            extra_notes=(
+                "Blocked, because this shape really does compare whole origins. That is "
+                "what makes the one extra entry so easy to wave through in review.",
+            ),
+        ),
+    ]
+
+
+SHAPE_RUNNERS: Final[dict[str, Callable[..., list[ScenarioResult]]]] = {
+    "reflect": run_reflect_shape,
+    "sloppy": run_sloppy_shape,
+    "null": run_null_shape,
+}

@@ -11,9 +11,10 @@
 # ./artifacts, and tears everything down.
 #
 # `--with-vulnerable` additionally starts the intentionally vulnerable API and the
-# attacker's page. That takes two deliberate actions — this flag, which selects the opt-in
-# Compose profile, and ALLOW_VULNERABLE_DEMO=true, which the vulnerable application checks
-# for itself. Either one alone does nothing.
+# attacker origins, and walks the browser through every misconfiguration shape in turn.
+# That takes two deliberate actions — this flag, which selects the opt-in Compose
+# profile, and ALLOW_VULNERABLE_DEMO=true, which the vulnerable application checks for
+# itself. Either one alone does nothing.
 #
 # The host needs Docker and nothing else: no Python, no browser, no hosts-file entry, no
 # trusted certificate, no published port.
@@ -24,6 +25,12 @@ cd "$(dirname "$0")/.."
 BROWSER_CONTAINER=originjack-browser-run
 ARTIFACTS_DIR=artifacts
 WITH_VULNERABLE=false
+
+# The three shapes are mutually exclusive: shape 2's whole lesson is that the plain
+# attacker origin is *blocked* under it, which cannot be true while shape 1 is live. The
+# vulnerable API is recreated between them and the harness runs once per shape,
+# accumulating into a single transcript.
+SHAPES="reflect sloppy null"
 
 case "${1:-}" in
   "") ;;
@@ -66,6 +73,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+copy_artifacts() {
+  # `docker cp` writes as the host user, so the artifacts land readable without
+  # loosening permissions anywhere. Done from whichever browser container ran last —
+  # including a failed one, since that is when they matter most.
+  mkdir -p "$ARTIFACTS_DIR"
+  if docker container inspect "$BROWSER_CONTAINER" >/dev/null 2>&1; then
+    docker cp "$BROWSER_CONTAINER:/artifacts/." "$ARTIFACTS_DIR/" >/dev/null 2>&1 \
+      && echo "==> run artifacts copied to ./$ARTIFACTS_DIR"
+    docker rm -f "$BROWSER_CONTAINER" >/dev/null 2>&1 || true
+  fi
+}
+
 echo "==> building the demo images (throwaway CA + per-origin certificates)"
 # Both build targets are named explicitly: `browser` sits behind a Compose profile, so a
 # bare `compose build` would silently skip it.
@@ -93,12 +112,13 @@ echo "    refused without ALLOW_VULNERABLE_DEMO=true, as it must"
 
 if [ "$WITH_VULNERABLE" = true ]; then
   echo "==> starting the secure origins AND the opt-in vulnerable services"
-  compose up --detach --wait api app partner legacy-api attacker
+  compose up --detach --wait \
+    api app partner legacy-api attacker attacker-prefix attacker-suffix
 else
   echo "==> starting the API and the two static origins"
   compose up --detach --wait api app partner
   running_optin="$(docker compose ps --services --status running 2>/dev/null \
-    | grep -E '^(legacy-api|attacker)$' || true)"
+    | grep -E '^(legacy-api|attacker|attacker-prefix|attacker-suffix)$' || true)"
   if [ -n "$running_optin" ]; then
     echo "FAIL: the default path started an opt-in service: $running_optin" >&2
     exit 1
@@ -113,27 +133,37 @@ else
   compose run --rm --no-deps verify
 fi
 
-echo "==> driving the demonstration through a real headless browser"
-docker rm -f "$BROWSER_CONTAINER" >/dev/null 2>&1 || true
-set +e
+browser_rc=0
 if [ "$WITH_VULNERABLE" = true ]; then
-  compose run --no-deps --name "$BROWSER_CONTAINER" \
-    -e ORIGINJACK_INCLUDE_VULNERABLE=1 browser
-else
-  compose run --no-deps --name "$BROWSER_CONTAINER" browser
-fi
-browser_rc=$?
-set -e
+  pass=0
+  for shape in $SHAPES; do
+    pass=$((pass + 1))
+    echo "==> driving a real headless browser — pass $pass, shape: $shape"
+    export ORIGINJACK_VULNERABLE_SHAPE="$shape"
+    compose up --detach --wait --force-recreate legacy-api >/dev/null
 
-# Copy the transcript and screenshots out before anything is removed — they are most
-# useful precisely when the run failed. `docker cp` writes as the host user, so the
-# artifacts land readable without loosening permissions anywhere.
-mkdir -p "$ARTIFACTS_DIR"
-if docker container inspect "$BROWSER_CONTAINER" >/dev/null 2>&1; then
-  docker cp "$BROWSER_CONTAINER:/artifacts/." "$ARTIFACTS_DIR/" >/dev/null 2>&1 \
-    && echo "==> run artifacts copied to ./$ARTIFACTS_DIR"
+    docker rm -f "$BROWSER_CONTAINER" >/dev/null 2>&1 || true
+    set +e
+    compose run --no-deps --name "$BROWSER_CONTAINER" \
+      -e ORIGINJACK_INCLUDE_VULNERABLE=1 \
+      -e "ORIGINJACK_VULNERABLE_SHAPE=$shape" \
+      -e "ORIGINJACK_PASS=$pass" \
+      browser
+    browser_rc=$?
+    set -e
+    [ "$browser_rc" -eq 0 ] || break
+  done
+  unset ORIGINJACK_VULNERABLE_SHAPE
+else
+  echo "==> driving the demonstration through a real headless browser"
   docker rm -f "$BROWSER_CONTAINER" >/dev/null 2>&1 || true
+  set +e
+  compose run --no-deps --name "$BROWSER_CONTAINER" browser
+  browser_rc=$?
+  set -e
 fi
+
+copy_artifacts
 
 if [ "$browser_rc" -ne 0 ]; then
   echo "==> browser harness failed (exit $browser_rc); see ./$ARTIFACTS_DIR" >&2
@@ -142,7 +172,7 @@ fi
 
 echo
 if [ "$WITH_VULNERABLE" = true ]; then
-  echo "==> originjack: the vulnerable/secure contrast verified through a real browser"
+  echo "==> originjack: every misconfiguration shape verified through a real browser"
 else
   echo "==> originjack: secure baseline verified through a real browser"
 fi

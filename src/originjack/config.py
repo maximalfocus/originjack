@@ -18,6 +18,10 @@ SameSite = Literal["none", "lax"]
 #: visibly a fixed, server-side set rather than anything derived from a request.
 FIRST_PARTY_ORIGIN: Final = "https://app.meridianpay.example"
 
+#: The fictional corporate domain. Used *only* by the misconfigured policies, which is
+#: the point: a correct policy compares whole origins and never reasons about domains.
+CORPORATE_DOMAIN: Final = "meridianpay.example"
+
 #: Conspicuously fake. Published on purpose — see the module docstring.
 DEMO_SESSION_SIGNING_KEY: Final = "originjack-demo-signing-key-not-a-secret"
 

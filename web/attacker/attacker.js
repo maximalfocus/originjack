@@ -17,9 +17,14 @@ const API_ORIGINS = {
   secure: "https://api.meridianpay.example",
 };
 
-const requested = new URLSearchParams(location.search).get("api");
+const params = new URLSearchParams(location.search);
+const requested = params.get("api");
 const target = requested === "secure" ? "secure" : "vulnerable";
 const API_ORIGIN = API_ORIGINS[target];
+
+// `?mode=iframe` makes the read from inside a sandboxed frame instead of from this
+// document, so the browser sends `Origin: null` rather than this page's origin.
+const mode = params.get("mode") === "iframe" ? "iframe" : "direct";
 
 const targetEl = document.getElementById("target");
 const statusEl = document.getElementById("status");
@@ -78,4 +83,47 @@ async function attempt() {
   }
 }
 
-attempt();
+function runSandboxedFrame() {
+  const framePanel = document.getElementById("frame-panel");
+  const frameOriginEl = document.getElementById("frame-origin");
+  const holder = document.getElementById("frame-holder");
+  framePanel.hidden = false;
+
+  window.addEventListener("message", (event) => {
+    // `event.origin` is what the browser says the frame's origin is. For a sandboxed
+    // frame without allow-same-origin it is the string "null" — the same value that
+    // went out in the request's Origin header.
+    frameOriginEl.textContent = event.origin;
+    document.body.dataset.frameOrigin = event.origin;
+
+    const message = event.data || {};
+    if (message.outcome === "released") {
+      document.body.dataset.outcome = "released";
+      statusEl.textContent = `A sandboxed frame with an opaque origin read the payslip (HTTP ${message.status}).`;
+      detailEl.textContent = "";
+      renderLoot(message.data);
+    } else {
+      document.body.dataset.outcome = "blocked";
+      statusEl.textContent =
+        "The browser refused to give the sandboxed frame the response. Nothing was obtained.";
+      detailEl.textContent = message.error || "";
+      lootPanel.hidden = true;
+    }
+  });
+
+  const frame = document.createElement("iframe");
+  frame.setAttribute("sandbox", "allow-scripts");
+  frame.setAttribute("title", "sandboxed frame with an opaque origin");
+  frame.width = "100%";
+  frame.height = "70";
+  frame.style.border = "1px dashed #c0392b";
+  frame.src = `/sandboxed.html?api=${encodeURIComponent(target)}`;
+  holder.replaceChildren(frame);
+}
+
+document.body.dataset.mode = mode;
+if (mode === "iframe") {
+  runSandboxedFrame();
+} else {
+  attempt();
+}

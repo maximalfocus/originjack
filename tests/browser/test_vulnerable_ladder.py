@@ -14,7 +14,7 @@ import pytest
 from originjack.harness import HarnessRun
 from originjack.harness.scenarios import VICTIM_MARKERS
 
-pytestmark = [pytest.mark.browser, pytest.mark.vulnerable]
+pytestmark = [pytest.mark.browser, pytest.mark.vulnerable, pytest.mark.shape("reflect")]
 
 ATTACKER_ORIGIN = "https://promo.attacker.example"
 VULNERABLE_READ = "attacker read (vulnerable API)"

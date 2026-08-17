@@ -59,7 +59,13 @@ class LabSettings:
     home: Path
     vulnerable_api_origin: str = "https://legacy-api.meridianpay.example"
     attacker_origin: str = "https://promo.attacker.example"
+    attacker_prefix_origin: str = "https://app.meridianpay.example.attacker.example"
+    attacker_suffix_origin: str = "https://notmeridianpay.example"
     include_vulnerable: bool = False
+    #: Which misconfiguration shape the vulnerable API is serving right now.
+    vulnerable_shape: str = "reflect"
+    #: Which pass of the multi-shape run this is. Pass 1 clears any earlier results.
+    pass_index: int = 1
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> LabSettings:
@@ -79,6 +85,16 @@ class LabSettings:
             attacker_origin=source.get(
                 "ORIGINJACK_ATTACKER_BASE", "https://promo.attacker.example"
             ),
+            attacker_prefix_origin=source.get(
+                "ORIGINJACK_ATTACKER_PREFIX_BASE",
+                "https://app.meridianpay.example.attacker.example",
+            ),
+            attacker_suffix_origin=source.get(
+                "ORIGINJACK_ATTACKER_SUFFIX_BASE", "https://notmeridianpay.example"
+            ),
+            vulnerable_shape=source.get("ORIGINJACK_VULNERABLE_SHAPE", "reflect").strip()
+            or "reflect",
+            pass_index=int(source.get("ORIGINJACK_PASS", "1")),
             # The vulnerable services only exist when the operator opted in twice, so the
             # harness only looks for them when told to.
             include_vulnerable=source.get("ORIGINJACK_INCLUDE_VULNERABLE", "").strip().lower()
@@ -147,6 +163,7 @@ class NetworkLog:
         self._url_by_request: dict[str, str] = {}
         self._method_by_request: dict[str, str] = {}
         self._raw_by_request: dict[str, tuple[int | None, str | None, str | None]] = {}
+        self._sent_origin_by_request: dict[str, str] = {}
 
     def attach(self, page: Page) -> None:
         page.on("response", self._record_response)
@@ -167,6 +184,7 @@ class NetworkLog:
           answered and the browser is what withheld the answer.
         """
         session.on("Network.requestWillBeSent", self._record_devtools_request)
+        session.on("Network.requestWillBeSentExtraInfo", self._record_devtools_request_headers)
         session.on("Network.responseReceivedExtraInfo", self._record_devtools_response)
 
     def _record_devtools_request(self, event: dict[str, Any]) -> None:
@@ -182,6 +200,22 @@ class NetworkLog:
         if request_id:
             self._url_by_request[request_id] = url
             self._method_by_request[request_id] = method
+
+    def _record_devtools_request_headers(self, event: dict[str, Any]) -> None:
+        """Capture the ``Origin`` the browser actually put on the wire.
+
+        The network stack adds it, not the page, so this is the only place the value can
+        be read rather than inferred — which matters most for a sandboxed frame, whose
+        origin is opaque and therefore sent as the literal string ``null``.
+        """
+        request_id = str(event.get("requestId", ""))
+        raw = event.get("headers")
+        if not request_id or not isinstance(raw, dict):
+            return
+        for key, value in raw.items():
+            if str(key).lower() == "origin":
+                self._sent_origin_by_request[request_id] = str(value)
+                return
 
     def _record_devtools_response(self, event: dict[str, Any]) -> None:
         request_id = str(event.get("requestId", ""))
@@ -208,6 +242,7 @@ class NetworkLog:
                 status=status,
                 allow_origin=allow_origin,
                 allow_credentials=allow_credentials,
+                request_origin=self._sent_origin_by_request.get(request_id),
             )
         return merged
 
@@ -262,7 +297,14 @@ class NetworkLog:
             allow_origin=base.allow_origin,
             allow_credentials=base.allow_credentials,
             failure=self._failures.get(url),
+            request_origin=base.request_origin or self._sent_origin_for(url),
         )
+
+    def _sent_origin_for(self, url: str) -> str | None:
+        for request_id, recorded in self._url_by_request.items():
+            if recorded == url and request_id in self._sent_origin_by_request:
+                return self._sent_origin_by_request[request_id]
+        return None
 
 
 class BrowserLab:
