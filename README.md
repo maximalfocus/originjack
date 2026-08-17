@@ -12,11 +12,10 @@ cookie — and how a **strict, exact-match origin allowlist** prevents it.
 
 ## Status
 
-`SLICE-003b` — the full ladder of three misconfiguration shapes.
-
-The demonstration now runs the correct configuration and all three ways of getting it
-wrong. Still to come are both negative controls, the `SameSite` contrast, the full
-regression matrix, the comparison CLI, and the walkthrough.
+`SLICE-003c` — the negative controls, the `SameSite` contrast, and the full regression
+matrix. The demonstration is complete: the correct configuration, all three ways of
+getting it wrong, and the three things people mistake for a fix. Still to come are the
+comparison CLI and the educational walkthrough.
 
 ## Run it
 
@@ -30,6 +29,10 @@ certificate per origin *inside the build*), starts the secure origins on the her
 network, runs the verification gate — Ruff, mypy, unit tests, HTTPS boundary tests — from
 inside that network, then drives the demonstration through a real headless Chromium,
 copies the transcript and screenshots to `./artifacts/`, and tears everything down.
+
+The vulnerable run walks six passes — the three misconfiguration shapes and the three
+controls — recreating the vulnerable API between them, because the configurations are
+mutually exclusive. Every scenario accumulates into one transcript.
 
 The host needs **Docker and nothing else**: no Python, no browser, no hosts-file entry,
 no trusted certificate, and no published port. GitHub Actions runs both commands.
@@ -148,6 +151,69 @@ browser sends when a document has none, and any page can arrange that in one att
 
 Under every shape, the secure API refuses all of them and releases nothing.
 
+## What CORS is *not*
+
+Three controls, each correcting a belief people hold confidently.
+
+**"We don't use `*`, so we're fine."** The wildcard *with credentials* is refused by the
+browser itself — the specification forbids the combination. So the wildcard is not the
+dangerous shape; under credentials it fails safe, and it fails safe indiscriminately:
+
+```
+[14] wildcard with credentials                                VERDICT: SECURE
+     server response   status=200  ACAO=*  ACAC=true  browser-failure=net::ERR_FAILED
+     decided by        THE BROWSER — the server answered 200; the browser withheld
+                       that answer from the page
+     · The server refused nothing here. It granted *every* origin and asked for
+       credentials as well.
+     · The refusal is indiscriminate. The legitimate first-party origin attempting the
+       identical read against this deployment: blocked: TypeError: Failed to fetch.
+       A wildcard with credentials is not a lax policy — it is a broken one.
+```
+
+Reflection, which looks more careful, is the shape that hands the data over.
+
+**"CORS protects our write endpoints."** It does not, and never did. A *simple*
+cross-origin `POST` — a CORS-safelisted content type, no custom header — triggers no
+preflight at all:
+
+```
+[15] simple cross-origin POST — vulnerable API                VERDICT: VULNERABLE
+     preflight         no (none sent)
+     browser released  no
+     state changed     yes
+     decided by        THE SERVER — it processed the write on a valid session alone,
+                       asking nothing about where the request came from
+     · The victim's payout account tail went from 8842 to 0001. The attacker never saw
+       the response, and changed the victim's bank details anyway.
+```
+
+The secure API refuses the identical request (`415`) because its route requires a
+non-simple header and a matching CSRF token — neither of which a simple cross-site
+request can carry. CORS governs **reading** a response, never **sending** a request, and
+is therefore not a CSRF defence.
+
+**"`SameSite` fixed this."** It withholds the *credential*, not the cross-origin read:
+
+```
+[17] SameSite=Lax contrast                                    VERDICT: SECURE
+     server response   status=401  ACAO=https://promo.attacker.example  ACAC=true
+     browser released  yes
+     victim data rendered  no
+     · The cross-origin read still succeeded — the browser released the response to the
+       attacker's origin, exactly as the policy told it to. There is simply nothing in
+       it, because Lax withheld the cookie.
+```
+
+The misconfiguration is untouched. For the many real APIs that must set
+`SameSite=None; Secure` — a separate front-end domain, an embedded third-party surface, a
+deliberately cross-site API — it withholds nothing at all.
+
+> Not built, and named here because it is a real variant: CORS response-header cache
+> poisoning through a shared HTTP cache, where a missing `Vary: Origin` lets a cache hand
+> one origin's grant to another. It needs a cache tier this vulnerability does not, so it
+> is out of scope. This demo sends `Vary: Origin` on every response, refusals included.
+
 ## The browser is the enforcement point
 
 The server can describe its policy, but only the browser enforces it — so a header
@@ -219,7 +285,8 @@ docker/                  images, throwaway CA generation, origin list
 scripts/                 demo.sh (the one command) and the in-container gates
 src/originjack/          the API, the origin policy, sessions, fixtures, audit log
   cors.py                the secure decision  ─┐ read these two
-  vulnerable_cors.py     the misconfigured one ┘ together
+  vulnerable_cors.py     the misconfigured ones ┘ together
+  statechange.py         what each deployment demands before it will change anything
   secure.py              the secure entry point
   vulnerable.py          the opt-in entry point and its acknowledgement gate
   harness/               the browser lab, its scenarios, and the transcript

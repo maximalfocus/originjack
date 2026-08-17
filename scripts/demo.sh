@@ -26,11 +26,20 @@ BROWSER_CONTAINER=originjack-browser-run
 ARTIFACTS_DIR=artifacts
 WITH_VULNERABLE=false
 
-# The three shapes are mutually exclusive: shape 2's whole lesson is that the plain
-# attacker origin is *blocked* under it, which cannot be true while shape 1 is live. The
-# vulnerable API is recreated between them and the harness runs once per shape,
-# accumulating into a single transcript.
-SHAPES="reflect sloppy null"
+# The shapes are mutually exclusive: shape 2's whole lesson is that the plain attacker
+# origin is *blocked* under it, which cannot be true while shape 1 is live. The vulnerable
+# API is recreated between passes and the harness runs once per pass, accumulating into a
+# single transcript.
+#
+# Each entry is label:shape:samesite. The simple-request control reuses the sloppy shape
+# on purpose, so the attacker is shown reading nothing while the write lands anyway; the
+# SameSite contrast reuses the reflection shape and changes only the cookie.
+PASSES="reflect:reflect:none
+sloppy:sloppy:none
+null:null:none
+wildcard:wildcard:none
+simple-post:sloppy:none
+samesite-lax:reflect:lax"
 
 case "${1:-}" in
   "") ;;
@@ -136,10 +145,16 @@ fi
 browser_rc=0
 if [ "$WITH_VULNERABLE" = true ]; then
   pass=0
-  for shape in $SHAPES; do
+  for entry in $PASSES; do
     pass=$((pass + 1))
-    echo "==> driving a real headless browser — pass $pass, shape: $shape"
+    label="${entry%%:*}"
+    rest="${entry#*:}"
+    shape="${rest%%:*}"
+    samesite="${rest#*:}"
+
+    echo "==> driving a real headless browser — pass $pass: $label (shape $shape, SameSite=$samesite)"
     export ORIGINJACK_VULNERABLE_SHAPE="$shape"
+    export ORIGINJACK_LEGACY_SAMESITE="$samesite"
     compose up --detach --wait --force-recreate legacy-api >/dev/null
 
     docker rm -f "$BROWSER_CONTAINER" >/dev/null 2>&1 || true
@@ -147,13 +162,14 @@ if [ "$WITH_VULNERABLE" = true ]; then
     compose run --no-deps --name "$BROWSER_CONTAINER" \
       -e ORIGINJACK_INCLUDE_VULNERABLE=1 \
       -e "ORIGINJACK_VULNERABLE_SHAPE=$shape" \
+      -e "ORIGINJACK_PASS_LABEL=$label" \
       -e "ORIGINJACK_PASS=$pass" \
       browser
     browser_rc=$?
     set -e
     [ "$browser_rc" -eq 0 ] || break
   done
-  unset ORIGINJACK_VULNERABLE_SHAPE
+  unset ORIGINJACK_VULNERABLE_SHAPE ORIGINJACK_LEGACY_SAMESITE
 else
   echo "==> driving the demonstration through a real headless browser"
   docker rm -f "$BROWSER_CONTAINER" >/dev/null 2>&1 || true

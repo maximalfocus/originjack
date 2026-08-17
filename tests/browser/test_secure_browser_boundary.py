@@ -18,7 +18,7 @@ from originjack.harness.transcript import ENGINE_NOTES
 
 # The secure baseline is the reference, not a per-shape observation, so the harness runs
 # it once — on the first pass, where the reflection shape is live.
-pytestmark = [pytest.mark.browser, pytest.mark.shape("reflect")]
+pytestmark = [pytest.mark.browser, pytest.mark.demo_pass("reflect")]
 
 
 # --- the lab itself -------------------------------------------------------------------

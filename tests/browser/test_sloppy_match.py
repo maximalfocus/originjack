@@ -11,7 +11,7 @@ import pytest
 
 from originjack.harness import HarnessRun
 
-pytestmark = [pytest.mark.browser, pytest.mark.vulnerable, pytest.mark.shape("sloppy")]
+pytestmark = [pytest.mark.browser, pytest.mark.vulnerable, pytest.mark.demo_pass("sloppy")]
 
 PLAIN = "sloppy match — plain attacker origin"
 PREFIX = "sloppy match — prefix lookalike"

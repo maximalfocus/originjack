@@ -65,7 +65,11 @@ def test_healthz_reports_the_installed_policy(client: TestClient) -> None:
     response = client.get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "policy": "secure-exact-match-allowlist"}
+    assert response.json() == {
+        "status": "ok",
+        "policy": "secure-exact-match-allowlist",
+        "writes": "csrf-protected-writes",
+    }
 
 
 def test_login_issues_a_cross_site_session_cookie(client: TestClient) -> None:

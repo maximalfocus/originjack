@@ -53,6 +53,7 @@ function renderPayslip(data) {
     ["Account tail", `•••• ${data.payout_account.account_tail}`],
   ]);
   payoutPanel.hidden = false;
+  document.body.dataset.payoutTail = data.payout_account.account_tail;
 }
 
 async function signIn() {
@@ -121,6 +122,7 @@ payoutForm.addEventListener("submit", async (event) => {
       ["Bank", updated.bank_name],
       ["Account tail", `•••• ${updated.account_tail}`],
     ]);
+    document.body.dataset.payoutTail = updated.account_tail;
     payoutStatusEl.textContent = "Payout account updated through the CSRF-protected route.";
     document.body.dataset.payout = "updated";
   } catch (error) {

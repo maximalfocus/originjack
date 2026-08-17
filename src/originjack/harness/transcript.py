@@ -38,12 +38,13 @@ def _decided_by(result: ScenarioResult) -> str:
     """
     observation = result.observation
 
-    if result.decided_by == "server" and result.verdict == "vulnerable":
-        # Never "the allowlist granted it": the shapes fail in different ways and none of
-        # them is a working allowlist. The scenario supplies the accurate phrasing.
-        detail = result.decider_detail or "it granted an origin it never properly compared"
-        return f"THE SERVER — {detail}; the browser complied, correctly"
     if result.decided_by == "server":
+        # Never a blanket "the allowlist granted it": the shapes fail in different ways,
+        # none of them is a working allowlist, and one of these decisions is a refusal.
+        # The scenario supplies the accurate phrasing whenever it has one.
+        if result.decider_detail:
+            prefix = "THE SERVER" if result.verdict == "vulnerable" else "the server"
+            return f"{prefix} — {result.decider_detail}"
         return "the server's allowlist granted it, and the browser honoured the grant"
 
     if observation is not None and observation.server_answered:
