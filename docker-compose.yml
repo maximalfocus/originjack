@@ -121,7 +121,10 @@ services:
     environment:
       ALLOW_VULNERABLE_DEMO: ${ALLOW_VULNERABLE_DEMO:-}
       ORIGINJACK_ALLOWED_ORIGINS: "https://app.meridianpay.example"
-      ORIGINJACK_VULNERABLE_SHAPE: "reflect"
+      # The three shapes are mutually exclusive — shape 2's whole lesson is that the
+      # plain attacker origin is *blocked* under it, which cannot be true while shape 1
+      # is live. The demonstration recreates this service once per shape.
+      ORIGINJACK_VULNERABLE_SHAPE: ${ORIGINJACK_VULNERABLE_SHAPE:-reflect}
       ORIGINJACK_SESSION_SAMESITE: "none"
     command:
       - uvicorn
@@ -171,6 +174,65 @@ services:
     healthcheck:
       test:
         ["CMD", "python", "-m", "originjack.healthcheck", "https://promo.attacker.example/healthz"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
+  # The same attacker page on a hostname that walks through a prefix or unanchored-regex
+  # check against the corporate domain. The attacker owns all of `attacker.example`.
+  attacker-prefix:
+    <<: *hardening
+    image: originjack:local
+    pull_policy: never
+    profiles: ["vulnerable"]
+    environment:
+      ORIGINJACK_STATIC_ROOT: /app/web/attacker
+    command:
+      - uvicorn
+      - originjack.staticweb:app
+      - --host=0.0.0.0
+      - --port=443
+      - --no-access-log
+      - --ssl-certfile=/certs/app.meridianpay.example.attacker.example/cert.pem
+      - --ssl-keyfile=/certs/app.meridianpay.example.attacker.example/key.pem
+    networks:
+      demo:
+        aliases: ["app.meridianpay.example.attacker.example"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - originjack.healthcheck
+        - https://app.meridianpay.example.attacker.example/healthz
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 3s
+
+  # And on a hostname that walks through a suffix check.
+  attacker-suffix:
+    <<: *hardening
+    image: originjack:local
+    pull_policy: never
+    profiles: ["vulnerable"]
+    environment:
+      ORIGINJACK_STATIC_ROOT: /app/web/attacker
+    command:
+      - uvicorn
+      - originjack.staticweb:app
+      - --host=0.0.0.0
+      - --port=443
+      - --no-access-log
+      - --ssl-certfile=/certs/notmeridianpay.example/cert.pem
+      - --ssl-keyfile=/certs/notmeridianpay.example/key.pem
+    networks:
+      demo:
+        aliases: ["notmeridianpay.example"]
+    healthcheck:
+      test:
+        ["CMD", "python", "-m", "originjack.healthcheck", "https://notmeridianpay.example/healthz"]
       interval: 3s
       timeout: 5s
       retries: 30

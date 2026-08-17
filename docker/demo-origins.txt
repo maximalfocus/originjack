@@ -13,3 +13,8 @@ partner.othercorp.example
 # because the image is built once, and a certificate for a name nothing serves is inert.
 legacy-api.meridianpay.example
 promo.attacker.example
+# Two lookalikes an attacker can register, which a sloppy string check mistakes for the
+# corporate domain. The first defeats a prefix or unanchored-regex match; the second
+# defeats a suffix match. Both belong entirely to the attacker.
+app.meridianpay.example.attacker.example
+notmeridianpay.example

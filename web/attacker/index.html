@@ -6,7 +6,7 @@
     <title>Summer Promo — win a holiday! (fictional attacker page)</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body data-outcome="pending" data-api="">
+  <body data-outcome="pending" data-api="" data-mode="direct" data-frame-origin="">
     <header>
       <p class="danger">
         <strong>Intentionally malicious demonstration page — local educational material.</strong>
@@ -36,6 +36,21 @@
         <h2>Result</h2>
         <p id="status" role="status">Requesting…</p>
         <pre id="detail"></pre>
+      </section>
+
+      <section id="frame-panel" hidden>
+        <h2>Sandboxed frame</h2>
+        <p>
+          The read below is made from a frame this page created with
+          <code>sandbox="allow-scripts"</code> and no <code>allow-same-origin</code>. The
+          browser therefore has no origin to report for it and sends
+          <code>Origin: null</code>.
+        </p>
+        <p>
+          Origin the browser reported for that frame:
+          <strong id="frame-origin">(waiting)</strong>
+        </p>
+        <div id="frame-holder"></div>
       </section>
 
       <section id="loot-panel" hidden>

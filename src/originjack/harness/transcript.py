@@ -39,12 +39,10 @@ def _decided_by(result: ScenarioResult) -> str:
     observation = result.observation
 
     if result.decided_by == "server" and result.verdict == "vulnerable":
-        # Not "the allowlist granted it" — there is no allowlist here. The server named
-        # the caller's own origin as allowed, having never compared it to anything.
-        return (
-            "THE SERVER — it echoed the caller's own origin back as an allowed one; "
-            "the browser complied, correctly"
-        )
+        # Never "the allowlist granted it": the shapes fail in different ways and none of
+        # them is a working allowlist. The scenario supplies the accurate phrasing.
+        detail = result.decider_detail or "it granted an origin it never properly compared"
+        return f"THE SERVER — {detail}; the browser complied, correctly"
     if result.decided_by == "server":
         return "the server's allowlist granted it, and the browser honoured the grant"
 
@@ -96,6 +94,8 @@ def render(
         lines.append(f"{heading}VERDICT: {result.verdict.upper()}")
         lines.append(f"    {result.summary}")
         lines.append("")
+        if result.shape:
+            lines.append(_field("vulnerable shape", result.shape))
         lines.append(_field("calling origin", result.calling_origin))
         lines.append(_field("credential mode", result.credential_mode))
         lines.append(_field("preflight", _preflight(result.preflight)))

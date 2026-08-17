@@ -11,17 +11,24 @@ whoever asks, and grants credentials while doing it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Final, Literal, get_args
 
-from originjack.config import ConfigurationError, Settings
+from originjack.config import CORPORATE_DOMAIN, ConfigurationError, Settings
 from originjack.cors import REFUSED, CorsDecision, CorsPolicy
 
 #: The misconfiguration shapes this demonstration ships. Each is a different amount of
-#: effort spent arriving at the same mistake.
-VulnerableShape = Literal["reflect"]
+#: effort spent arriving at the same mistake — and the later two are more dangerous than
+#: the first, because they arrive with the reassurance of looking deliberate.
+VulnerableShape = Literal["reflect", "sloppy", "null"]
 
 DEFAULT_SHAPE: Final[VulnerableShape] = "reflect"
+
+#: The literal origin a browser sends from an opaque origin — a sandboxed iframe, a
+#: `file://` page, some redirect chains. It is a string, not a domain, and it belongs to
+#: nobody, which is why no allowlist may contain it.
+NULL_ORIGIN: Final = "null"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +73,125 @@ class ReflectedOriginPolicy:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class SloppyMatchPolicy:
+    """Shape 2 — an allowlist that is not one.
+
+    This is what "only allow our own domain" turns into when it is implemented against
+    the origin *string* instead of against a set of origins. The pattern is unanchored,
+    so it matches anywhere in the value:
+
+    * ``https://promo.attacker.example`` no longer matches, so the obvious attack stops
+      working and the configuration looks repaired;
+    * ``https://app.meridianpay.example.attacker.example`` matches, because the corporate
+      domain appears in the middle of a domain the attacker owns; and
+    * ``https://notmeridianpay.example`` matches, because it appears at the end of one.
+
+    A plain ``corporate_domain in origin``, an ``endswith`` that forgets the leading dot,
+    or a regular expression missing its anchors all have this same hole. The bug is not
+    the technique; it is comparing anything other than whole origins.
+    """
+
+    corporate_domain: str
+    allowed_methods: tuple[str, ...]
+    allowed_headers: tuple[str, ...]
+    max_age: int
+    _name: str = field(default="vulnerable-sloppy-match", init=False, repr=False)
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> SloppyMatchPolicy:
+        return cls(
+            corporate_domain=CORPORATE_DOMAIN,
+            allowed_methods=settings.allowed_methods,
+            allowed_headers=settings.allowed_headers,
+            max_age=settings.preflight_max_age,
+        )
+
+    def decide(self, origin: str | None) -> CorsDecision:
+        if origin is None:
+            return REFUSED
+
+        # Unanchored. Matches the corporate domain anywhere in the origin, including in
+        # the middle of somebody else's.
+        if re.search(re.escape(self.corporate_domain), origin) is None:
+            return REFUSED
+
+        return CorsDecision(
+            granted=True,
+            allow_origin=origin,
+            allow_credentials=True,
+            allow_methods=self.allowed_methods,
+            allow_headers=self.allowed_headers,
+            max_age=self.max_age,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NullOriginPolicy:
+    """Shape 3 — the secure policy, with one extra entry in the set.
+
+    This shape is the most instructive of the three precisely because it is *so nearly
+    right*. It compares whole strings against a fixed server-side set, exactly as it
+    should. Someone simply added ``null`` to that set, because a sandboxed iframe or a
+    redirect chain needed it and the request looked harmless.
+
+    ``null`` is not an origin. It is what the browser sends *instead of* one, and anybody
+    can arrange to send it — from a sandboxed iframe, in one attribute.
+    """
+
+    allowed_origins: tuple[str, ...]
+    allowed_methods: tuple[str, ...]
+    allowed_headers: tuple[str, ...]
+    max_age: int
+    _name: str = field(default="vulnerable-null-origin", init=False, repr=False)
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> NullOriginPolicy:
+        return cls(
+            # The one-entry difference from the secure policy.
+            allowed_origins=(*settings.allowed_origins, NULL_ORIGIN),
+            allowed_methods=settings.allowed_methods,
+            allowed_headers=settings.allowed_headers,
+            max_age=settings.preflight_max_age,
+        )
+
+    def decide(self, origin: str | None) -> CorsDecision:
+        if origin is None:
+            return REFUSED
+
+        for allowlisted in self.allowed_origins:
+            if origin == allowlisted:
+                return CorsDecision(
+                    granted=True,
+                    allow_origin=allowlisted,
+                    allow_credentials=True,
+                    allow_methods=self.allowed_methods,
+                    allow_headers=self.allowed_headers,
+                    max_age=self.max_age,
+                )
+
+        return REFUSED
+
+
+_SHAPES: Final[dict[str, type[ReflectedOriginPolicy | SloppyMatchPolicy | NullOriginPolicy]]] = {
+    "reflect": ReflectedOriginPolicy,
+    "sloppy": SloppyMatchPolicy,
+    "null": NullOriginPolicy,
+}
+
+
 def policy_for_shape(shape: str, settings: Settings) -> CorsPolicy:
     """Select a misconfiguration shape by name."""
     if shape not in get_args(VulnerableShape):
         raise ConfigurationError(
             f"unknown vulnerable shape {shape!r}; expected one of {get_args(VulnerableShape)}"
         )
-    return ReflectedOriginPolicy.from_settings(settings)
+    return _SHAPES[shape].from_settings(settings)

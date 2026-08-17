@@ -101,6 +101,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         "yes",
     }
 
+    # The three misconfiguration shapes are mutually exclusive, so only one is live per
+    # pass. A test written for another shape is skipped rather than run against the wrong
+    # configuration.
+    live_shape = os.environ.get("ORIGINJACK_VULNERABLE_SHAPE", "reflect").strip() or "reflect"
+
     for item in items:
         if "boundary" in item.keywords and not has_services:
             item.add_marker(skip_boundary)
@@ -108,3 +113,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(skip_browser)
         if "vulnerable" in item.keywords and not has_vulnerable:
             item.add_marker(skip_vulnerable)
+
+        shape_marker = item.get_closest_marker("shape")
+        if shape_marker and shape_marker.args and shape_marker.args[0] != live_shape:
+            item.add_marker(
+                pytest.mark.skip(
+                    reason=f"shape {shape_marker.args[0]!r} is not the live shape ({live_shape!r})"
+                )
+            )

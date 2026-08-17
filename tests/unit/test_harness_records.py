@@ -106,6 +106,7 @@ def test_the_transcript_never_credits_an_allowlist_the_server_does_not_have() ->
                 victim_data_rendered=True,
                 decided_by="server",
                 verdict="vulnerable",
+                decider_detail="it echoed the caller's own origin back as an allowed one",
                 observation=NetworkObservation(
                     url="https://legacy-api.meridianpay.example/me/payslip",
                     status=200,

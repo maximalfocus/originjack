@@ -12,13 +12,11 @@ cookie — and how a **strict, exact-match origin allowlist** prevents it.
 
 ## Status
 
-`SLICE-003a` — the vulnerable API, its opt-in controls, and origin reflection with
-credentials.
+`SLICE-003b` — the full ladder of three misconfiguration shapes.
 
-The demonstration now has both halves: the correct configuration, and the first of the
-three misconfiguration shapes. Still to come are the sloppy-allowlist and `null`-origin
-shapes, both negative controls, the `SameSite` contrast, the full regression matrix, the
-comparison CLI, and the walkthrough.
+The demonstration now runs the correct configuration and all three ways of getting it
+wrong. Still to come are both negative controls, the `SameSite` contrast, the full
+regression matrix, the comparison CLI, and the walkthrough.
 
 ## Run it
 
@@ -62,6 +60,8 @@ still refuses, and the default mode additionally proves no opt-in service came u
 | `https://partner.othercorp.example` | an unrelated third party the allowlist does not name | ✅ |
 | `https://legacy-api.meridianpay.example` | the **vulnerable** API | opt-in |
 | `https://promo.attacker.example` | the attacker's page | opt-in |
+| `https://app.meridianpay.example.attacker.example` | a lookalike that defeats a prefix or unanchored-regex check | opt-in |
+| `https://notmeridianpay.example` | a lookalike that defeats a suffix check | opt-in |
 
 The first two are separate on purpose. That separation is the ordinary real-world
 arrangement that makes a CORS policy necessary at all, and it is why the session cookie
@@ -109,6 +109,44 @@ turn. The transcript:
 Same page, same URL path, same credentials, same logged-in victim. Both servers answered
 in full. One of them told the browser to share the answer with an origin it had never
 compared to anything.
+
+## The ladder of three shapes
+
+They are the same mistake at three levels of effort, and the later two are **more**
+dangerous than the first, because they arrive with the reassurance of looking deliberate.
+The three are mutually exclusive, so `--with-vulnerable` recreates the vulnerable API once
+per shape and accumulates every scenario into one transcript.
+
+**Shape 1 — origin reflection.** Answers with whatever origin asked. No comparison of any
+kind.
+
+**Shape 2 — the sloppy allowlist match.** An unanchored check against the corporate
+domain. `promo.attacker.example` is now **blocked**, so the obvious attack stops working
+and the configuration looks repaired — while both of these walk straight through it:
+
+| Origin | Why it matches | Who owns it |
+|---|---|---|
+| `app.meridianpay.example.attacker.example` | the corporate domain appears in the middle | the attacker |
+| `notmeridianpay.example` | it appears at the end | the attacker |
+
+A plain `in`, an `endswith` that forgets the leading dot, and a regex missing its anchors
+all have this hole. The bug is not the technique — it is comparing anything other than
+whole origins.
+
+**Shape 3 — the allowlisted `null`.** This one does everything right except the one thing:
+it compares whole strings against a fixed server-side set, and someone added `null` to
+that set because a sandboxed frame needed it. `null` is not an origin — it is what the
+browser sends when a document has none, and any page can arrange that in one attribute:
+
+```
+[11] null origin — sandboxed frame                            VERDICT: VULNERABLE
+     server response   status=200  sent-Origin=null  ACAO=null  ACAC=true
+     decided by        THE SERVER — `null` was in its accepted set, and any page can
+                       arrange to send it; the browser complied, correctly
+     · The browser reported that frame's origin to its parent as: null.
+```
+
+Under every shape, the secure API refuses all of them and releases nothing.
 
 ## The browser is the enforcement point
 
