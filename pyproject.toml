@@ -1,5 +1,6 @@
 [build-system]
-requires = ["hatchling>=1.25"]
+# 1.27 is the first release with PEP 639 support, which the SPDX `license` below needs.
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,7 +9,10 @@ version = "0.1.0"
 description = "Local, containerized educational demonstration of CORS misconfiguration and the exact-match origin allowlist that prevents it."
 readme = "README.md"
 requires-python = ">=3.13"
-license = { text = "MIT" }
+# PEP 639 SPDX expression, so the package metadata says the same thing the root LICENSE
+# file and the repository's own metadata say.
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
   "fastapi>=0.115,<0.117",
   "uvicorn[standard]>=0.32,<0.35",

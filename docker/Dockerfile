@@ -35,7 +35,9 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir "uv==0.5.14"
 
-COPY pyproject.toml README.md ./
+# LICENSE joins these two because pyproject.toml declares it through PEP 639
+# `license-files`; the build backend reads it here, before any source exists.
+COPY pyproject.toml README.md LICENSE ./
 
 # A placeholder package, so the project installs from pyproject.toml alone and this layer
 # does not depend on any source file. The install is editable, so the real sources copied

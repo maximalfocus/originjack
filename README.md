@@ -10,15 +10,19 @@ cookie — and how a **strict, exact-match origin allowlist** prevents it.
 > RFC 2606 `.example` names. The demo runs on a hermetic container network with **no
 > egress**, contacts no real system, and must never be deployed anywhere.
 
-## Status
-
-`SLICE-004` — the comparison CLI and the educational walkthrough. The demonstration is
-complete: the correct configuration, all three ways of getting it wrong, the three things
-people mistake for a fix, and the explanation of all of it. Only publication remains.
+The demonstration is complete: the correct configuration, all three ways of getting it
+wrong, the three things people mistake for a fix, and the explanation of all of it. It is
+built for a mixed technical audience with no assumed knowledge of the same-origin policy,
+and it runs in under five minutes.
 
 **📖 [Read the walkthrough](docs/WALKTHROUGH.md)** — what the same-origin policy actually
 protects, which component enforces which rule, the ladder of three shapes, what CORS is
 *not*, and the fix.
+
+> **There is no hosted service here.** Nothing is deployed, no public endpoint exists, and
+> none is offered. `originjack` runs only on your own machine, on its own hermetic
+> container network, and makes **no production-safety claim** of any kind — it is teaching
+> material, not a library, a scanner, or a hardening tool.
 
 ## Run it
 
@@ -320,3 +324,17 @@ web/attacker/            the attacker's page (opt-in origin)
 tests/                   unit · in-process HTTP contract · HTTPS boundary · browser
 artifacts/               per-run transcript and screenshots (never committed)
 ```
+
+## Security, contributing, licence
+
+The permissive policies, the attacker pages, and the conspicuously fake fixture
+credentials are **the subject of this project**, not defects in it.
+[`SECURITY.md`](SECURITY.md) draws that line and gives a private reporting path for an
+*unintended* vulnerability — please read it before reporting anything.
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) has the one verification command and the safety
+boundaries a change must respect.
+
+Licensed under the [MIT License](LICENSE). It is offered as-is, with no warranty, no
+service-level agreement, no support or compatibility commitment, and no guaranteed
+response time.
