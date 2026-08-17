@@ -63,6 +63,7 @@ COPY src ./src
 COPY tests ./tests
 COPY web ./web
 COPY scripts ./scripts
+COPY docs ./docs
 COPY --from=certs /certs /certs
 
 # Non-root, and the server keys are readable only by that account's group.
@@ -86,6 +87,7 @@ COPY src ./src
 COPY tests ./tests
 COPY web ./web
 COPY scripts ./scripts
+COPY docs ./docs
 COPY --from=certs /certs /certs
 
 RUN groupadd --gid 10001 originjack \

@@ -12,10 +12,13 @@ cookie — and how a **strict, exact-match origin allowlist** prevents it.
 
 ## Status
 
-`SLICE-003c` — the negative controls, the `SameSite` contrast, and the full regression
-matrix. The demonstration is complete: the correct configuration, all three ways of
-getting it wrong, and the three things people mistake for a fix. Still to come are the
-comparison CLI and the educational walkthrough.
+`SLICE-004` — the comparison CLI and the educational walkthrough. The demonstration is
+complete: the correct configuration, all three ways of getting it wrong, the three things
+people mistake for a fix, and the explanation of all of it. Only publication remains.
+
+**📖 [Read the walkthrough](docs/WALKTHROUGH.md)** — what the same-origin policy actually
+protects, which component enforces which rule, the ladder of three shapes, what CORS is
+*not*, and the fix.
 
 ## Run it
 
@@ -32,7 +35,26 @@ copies the transcript and screenshots to `./artifacts/`, and tears everything do
 
 The vulnerable run walks six passes — the three misconfiguration shapes and the three
 controls — recreating the vulnerable API between them, because the configurations are
-mutually exclusive. Every scenario accumulates into one transcript.
+mutually exclusive. Every scenario accumulates into one transcript, and the run ends by
+printing the comparison:
+
+```
+#   scenario                                   calling origin                            ACAO                                      rel  data  decided  verdict
+1   attacker read (vulnerable API)             promo.attacker.example                    promo.attacker.example                    yes  YES   server   VULNERABLE
+2   attacker read (secure API)                 promo.attacker.example                    —                                         no   no    browser  SECURE
+7   sloppy match — prefix lookalike            app.meridianpay.example.attacker.example  app.meridianpay.example.attacker.example  yes  YES   server   VULNERABLE
+11  null origin — sandboxed frame              promo.attacker.example (sandboxed)        null                                      yes  YES   server   VULNERABLE
+14  wildcard with credentials                  promo.attacker.example                    *                                         no   no    browser  SECURE
+15  simple cross-origin POST — vulnerable API  promo.attacker.example                    —                                         no   no    server   VULNERABLE
+17  SameSite=Lax contrast                      promo.attacker.example                    promo.attacker.example                    yes  no    server   SECURE
+```
+
+Seven of seventeen rows, abridged. Read down the `ACAO` column and the whole
+vulnerability is one glance. Add `--verbose` for the underlying exchange behind each row:
+
+```sh
+docker compose run --rm --no-deps browser originjack compare --verbose
+```
 
 The host needs **Docker and nothing else**: no Python, no browser, no hosts-file entry,
 no trusted certificate, and no published port. GitHub Actions runs both commands.
@@ -281,12 +303,14 @@ repository, and none is issued by or for any real authority.
 ## Layout
 
 ```
+docs/WALKTHROUGH.md      the educational walkthrough
 docker/                  images, throwaway CA generation, origin list
 scripts/                 demo.sh (the one command) and the in-container gates
 src/originjack/          the API, the origin policy, sessions, fixtures, audit log
   cors.py                the secure decision  ─┐ read these two
   vulnerable_cors.py     the misconfigured ones ┘ together
   statechange.py         what each deployment demands before it will change anything
+  compare.py             the comparison CLI
   secure.py              the secure entry point
   vulnerable.py          the opt-in entry point and its acknowledgement gate
   harness/               the browser lab, its scenarios, and the transcript
